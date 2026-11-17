@@ -3,14 +3,15 @@
 import { useState } from "react";
 
 type Channel = { id: number; account_name: string; is_active: number };
+type Reel = { channel_id: number; remote_post_id: string; caption: string | null; permalink: string | null; account_name: string };
 type Rule = {
   id: number; channel_id: number; media_id: string; keywords: string[];
   link_url: string | null; private_reply_text: string | null; public_reply_text: string | null;
   enabled: number; last_polled_at: string | null; last_error: string | null; account_name: string;
 };
 
-export function InstagramCommentRules({ channels, initialRules }: {
-  channels: Channel[]; initialRules: Rule[];
+export function InstagramCommentRules({ channels, reels, initialRules }: {
+  channels: Channel[]; reels: Reel[]; initialRules: Rule[];
 }) {
   const [rules, setRules] = useState(initialRules);
   const [channelId, setChannelId] = useState(String(channels[0]?.id ?? ""));
@@ -63,6 +64,16 @@ export function InstagramCommentRules({ channels, initialRules }: {
             <label className="grid gap-1 text-sm">حساب Instagram
               <select className="rounded-lg border border-border bg-surface px-3 py-2" value={channelId} onChange={(e) => setChannelId(e.target.value)}>
                 {channels.map((c) => <option key={c.id} value={c.id}>{c.account_name}{c.is_active ? "" : " (غير نشط)"}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm">اختر ريلًا من المنشورات المتزامنة
+              <select value={mediaId} onChange={(e) => setMediaId(e.target.value)} className="rounded-lg border border-border bg-surface px-3 py-2">
+                <option value="">أو أدخل معرّف الريل يدويًا أدناه</option>
+                {reels.filter((reel) => reel.channel_id === Number(channelId)).map((reel) => (
+                  <option key={reel.remote_post_id} value={reel.remote_post_id}>
+                    {(reel.caption || reel.remote_post_id).slice(0, 65)} · {reel.remote_post_id}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="grid gap-1 text-sm">معرّف الريل (Media ID)
