@@ -159,3 +159,7 @@ a real Instagram account and publish. Verify credentials anytime with
 Discord and Telegram channels don't need any of the Meta setup above — see
 **`docs/other-platforms-setup.md`** instead. Setup is shorter for both: no public URL or
 tunnel is needed, since the worker uploads the image bytes directly.
+
+## Instagram Reel comment replies
+
+The dashboard includes **Comment replies** for opt-in keyword-triggered public replies and private replies to comments on selected Reels. Set up the account with the correct Instagram Login host and permissions first, then configure a rule in the dashboard. Reels are polled because Meta's comments webhook documentation currently lists Reels as unsupported. See **[docs/instagram-comment-automation.md](docs/instagram-comment-automation.md)** for setup and limits. The worker sends nothing while `DRY_RUN=1`.

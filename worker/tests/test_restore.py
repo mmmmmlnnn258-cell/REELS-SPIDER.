@@ -153,8 +153,12 @@ def test_rejects_a_backup_from_a_future_version(config, conn, make_publication, 
 
 
 def test_refuses_while_a_worker_holds_the_lock(
-    config, conn, make_publication, tmp_path, capsys
+    config, conn, make_publication, tmp_path, capsys, monkeypatch
 ):
+    # main() resolves its Config from the environment, not this test fixture. Point it
+    # at the fixture's database so the held lock and restore process address the same
+    # install (otherwise the test accidentally locks a different path).
+    monkeypatch.setenv("DATABASE_PATH", str(config.database_path))
     """The most dangerous case: replacing the database under a running worker."""
     make_publication()
     _seed_assets(config, conn)

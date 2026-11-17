@@ -12,6 +12,7 @@ const NAV = [
   { href: "/import", label: "Import", hint: "Bulk add images" },
   { href: "/library", label: "Library", hint: "Posts & bulk schedule" },
   { href: "/insights", label: "Insights", hint: "How accounts perform" },
+  { href: "/instagram-comments", label: "Comment replies", hint: "Reels comment automation" },
   { href: "/insights/pool", label: "BPP Pool", hint: "Posts worth repeating" },
   { href: "/media", label: "Media", hint: "Stored files & cleanup" },
   { href: "/periods", label: "Periods", hint: "In-season windows" },

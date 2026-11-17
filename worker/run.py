@@ -248,6 +248,12 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
 
     run_media_sync(conn, config, client, now, logger=logger, client_for=client_for)
 
+    # Comment-to-DM is opt-in per Reel. Never send messages during a dry run.
+    if not dry_run:
+        from .comment_automation import run_comment_automation
+        run_comment_automation(conn, config, now, logger=logger, client_for=client_for)
+
+
     # Then the account-level series and per-post insights that hang off what it found.
     # Order matters: a post has to exist in remote_media before it can be given metrics.
     from .account_metrics import run_account_metrics
