@@ -26,7 +26,7 @@ def _normalise_keyword(value: str) -> str:
     value = unicodedata.normalize("NFKC", value or "").casefold()
     value = "".join(
         char for char in value
-        if char != "\\u0640" and unicodedata.category(char) != "Mn"
+        if char != "ـ" and unicodedata.category(char) != "Mn"
     )
     value = value.translate(str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي"}))
     return " ".join(re.findall(r"\\w+", value))
