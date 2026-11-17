@@ -29,7 +29,7 @@ def _normalise_keyword(value: str) -> str:
         if char != "ـ" and unicodedata.category(char) != "Mn"
     )
     value = value.translate(str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي"}))
-    return " ".join(re.findall(r"\\w+", value))
+    return " ".join(re.findall(r"\w+", value))
 
 
 def _matches(text: str, keywords: list[str]) -> bool:
