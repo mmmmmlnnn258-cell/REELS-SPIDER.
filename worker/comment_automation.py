@@ -18,11 +18,8 @@ MAX_COMMENT_PAGES = 3
 
 def _matches(text: str, keywords: list[str]) -> bool:
     candidate = (text or "").casefold()
-    for raw in keywords:
-        keyword = str(raw).strip().casefold()
-        if keyword and re.search(r"(?<!\\w)" + re.escape(keyword) + r"(?!\\w)", candidate):
-            return True
-    return False
+    return any(str(raw).strip().casefold() in candidate
+               for raw in keywords if str(raw).strip())
 
 
 def _render(template: str, *, link: str, username: str, media_id: str) -> str:
