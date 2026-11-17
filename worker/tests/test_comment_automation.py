@@ -99,3 +99,22 @@ def test_private_replies_are_bounded_per_worker_cycle():
         "SELECT COUNT(*) FROM instagram_comment_events WHERE status='sent'"
     ).fetchone()[0] == 15
 
+
+def test_private_replies_respect_account_hourly_safety_limit():
+    conn = database()
+    now = datetime(2026,11,17,11,tzinfo=timezone.utc)
+    stamp = now.isoformat()
+    conn.executemany(
+        """INSERT INTO instagram_comment_events
+           (comment_id, rule_id, channel_id, media_id, comment_text, status, created_at, updated_at)
+           VALUES (?, 1, 1, 'reel-1', 'تم', 'sent', ?, ?)""",
+        [(f"prior-{i}", stamp, stamp) for i in range(700)],
+    )
+    conn.commit()
+    client = FakeClient([{"id":"new-comment","text":"تم","from":{"id":"person-1"}}])
+    run_comment_automation(conn, None, now, client_for=lambda _: client)
+    assert client.private == []
+    assert conn.execute(
+        "SELECT COUNT(*) FROM instagram_comment_events WHERE comment_id='new-comment'"
+    ).fetchone()[0] == 0
+
