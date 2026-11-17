@@ -27,6 +27,9 @@ jobs:
         working-directory: dashboard
     steps:
       - uses: actions/checkout@v4
+      - name: Initialize an empty database for the production build
+        working-directory: .
+        run: python migrate.py
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
