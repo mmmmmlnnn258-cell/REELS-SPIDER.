@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import unicodedata
 from datetime import datetime, timedelta, timezone
 
 POLL_INTERVAL_SECONDS = 120
@@ -20,10 +21,23 @@ MAX_PRIVATE_REPLIES_PER_CYCLE = 15
 MAX_PRIVATE_REPLIES_PER_HOUR = 700
 
 
+def _normalise_keyword(value: str) -> str:
+    """Normalise Arabic diacritics/letter variants and punctuation for matching."""
+    value = unicodedata.normalize("NFKC", value or "").casefold()
+    value = "".join(
+        char for char in value
+        if char != "\\u0640" and unicodedata.category(char) != "Mn"
+    )
+    value = value.translate(str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي"}))
+    return " ".join(re.findall(r"\\w+", value))
+
+
 def _matches(text: str, keywords: list[str]) -> bool:
-    candidate = (text or "").casefold()
-    return any(str(raw).strip().casefold() in candidate
-               for raw in keywords if str(raw).strip())
+    candidate = f" {_normalise_keyword(text)} "
+    return any(
+        (needle := _normalise_keyword(str(raw))) and f" {needle} " in candidate
+        for raw in keywords
+    )
 
 
 def _render(template: str, *, link: str, username: str, media_id: str) -> str:
