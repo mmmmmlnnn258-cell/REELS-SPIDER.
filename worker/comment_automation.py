@@ -17,6 +17,7 @@ MAX_COMMENT_PAGES = 3
 # Meta's documented private-reply ceiling is 750/hour/account. Polling every 120s
 # with this cap keeps one worker comfortably below that ceiling even across many rules.
 MAX_PRIVATE_REPLIES_PER_CYCLE = 15
+MAX_PRIVATE_REPLIES_PER_HOUR = 700
 
 
 def _matches(text: str, keywords: list[str]) -> bool:
@@ -59,6 +60,8 @@ def run_comment_automation(conn, config, now=None, logger=None, client_for=None)
     ).fetchall()
     sent = 0
     private_replies_this_cycle = 0
+    hourly_private_counts: dict[int, int] = {}
+    hour_cutoff = (now - timedelta(hours=1)).isoformat()
     stop_after_current_rule = False
     for rule in rows:
         if rule["last_polled_at"]:
@@ -81,9 +84,21 @@ def run_comment_automation(conn, config, now=None, logger=None, client_for=None)
                     media_id, token, limit=50, next_url=page_url
                 )
                 for comment in comments:
-                    if private_replies_this_cycle >= MAX_PRIVATE_REPLIES_PER_CYCLE:
-                        stop_after_current_rule = True
-                        break
+                    channel_id = int(rule["channel_id"])
+                    if rule["private_reply_text"]:
+                        if channel_id not in hourly_private_counts:
+                            hourly_private_counts[channel_id] = conn.execute(
+                                """SELECT COUNT(*) FROM instagram_comment_events
+                                   WHERE channel_id=? AND created_at>=?
+                                     AND status IN ('processing','sent','unknown')""",
+                                (channel_id, hour_cutoff),
+                            ).fetchone()[0]
+                        if (
+                            private_replies_this_cycle >= MAX_PRIVATE_REPLIES_PER_CYCLE
+                            or hourly_private_counts[channel_id] >= MAX_PRIVATE_REPLIES_PER_HOUR
+                        ):
+                            stop_after_current_rule = True
+                            break
                     comment_id = str(comment.get("id") or "")
                     if not comment_id:
                         continue
@@ -127,6 +142,7 @@ def run_comment_automation(conn, config, now=None, logger=None, client_for=None)
                     try:
                         if private_text.strip():
                             private_replies_this_cycle += 1
+                            hourly_private_counts[channel_id] = hourly_private_counts.get(channel_id, 0) + 1
                             result = client.send_private_reply(account_id, comment_id, private_text, token)
                             private_id = result.get("message_id")
                         if public_text.strip():
