@@ -14,6 +14,9 @@ from datetime import datetime, timedelta, timezone
 
 POLL_INTERVAL_SECONDS = 120
 MAX_COMMENT_PAGES = 3
+# Meta's documented private-reply ceiling is 750/hour/account. Polling every 120s
+# with this cap keeps one worker comfortably below that ceiling even across many rules.
+MAX_PRIVATE_REPLIES_PER_CYCLE = 15
 
 
 def _matches(text: str, keywords: list[str]) -> bool:
@@ -55,6 +58,8 @@ def run_comment_automation(conn, config, now=None, logger=None, client_for=None)
              AND c.access_token IS NOT NULL AND c.remote_account_id IS NOT NULL"""
     ).fetchall()
     sent = 0
+    private_replies_this_cycle = 0
+    stop_after_current_rule = False
     for rule in rows:
         if rule["last_polled_at"]:
             try:
@@ -76,6 +81,9 @@ def run_comment_automation(conn, config, now=None, logger=None, client_for=None)
                     media_id, token, limit=50, next_url=page_url
                 )
                 for comment in comments:
+                    if private_replies_this_cycle >= MAX_PRIVATE_REPLIES_PER_CYCLE:
+                        stop_after_current_rule = True
+                        break
                     comment_id = str(comment.get("id") or "")
                     if not comment_id:
                         continue
@@ -118,6 +126,7 @@ def run_comment_automation(conn, config, now=None, logger=None, client_for=None)
                     private_id = public_id = None
                     try:
                         if private_text.strip():
+                            private_replies_this_cycle += 1
                             result = client.send_private_reply(account_id, comment_id, private_text, token)
                             private_id = result.get("message_id")
                         if public_text.strip():
@@ -137,7 +146,7 @@ def run_comment_automation(conn, config, now=None, logger=None, client_for=None)
                         (status, private_id, public_id, error, now_iso, comment_id),
                     )
                     conn.commit()
-                if not page_url:
+                if stop_after_current_rule or not page_url:
                     break
             conn.execute(
                 "UPDATE instagram_comment_rules SET last_polled_at=?, last_error=NULL WHERE id=?",
@@ -154,4 +163,6 @@ def run_comment_automation(conn, config, now=None, logger=None, client_for=None)
             conn.commit()
             if logger:
                 logger.warning("[comment rule %s] polling failed: %s", rule["id"], error)
+        if stop_after_current_rule:
+            break
     return sent
