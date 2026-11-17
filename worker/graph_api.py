@@ -337,6 +337,59 @@ class GraphClient:
     # about length, and by then the post is already live and the reason is a mystery.
     COMMENT_MAX_CHARS = 2200
 
+    def get_media_comments(
+        self, media_id: str, token: str, *, limit: int = 50, next_url: str | None = None
+    ) -> tuple[list[dict], str | None]:
+        """Fetch one page of comments for an owned IG media item."""
+        if next_url:
+            data = self._get_url(next_url)
+        else:
+            data = self._get(
+                f"{media_id}/comments",
+                {
+                    "fields": "id,text,timestamp,username,from,parent_id",
+                    "limit": min(max(int(limit), 1), 100),
+                    "access_token": token,
+                },
+            )
+        items = data.get("data") or []
+        return [item for item in items if isinstance(item, dict)], (data.get("paging") or {}).get("next")
+
+    def _post_json(self, path: str, payload: dict, token: str) -> dict:
+        """POST a JSON body with a Bearer token, used by Instagram's Send API."""
+        try:
+            resp = self.session.post(
+                f"{self.base}/{path}", json=payload,
+                headers={"Authorization": f"Bearer {token}"}, timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise GraphAPIError(f"POST {path} -> request failed: {redact(str(exc))}") from None
+        self._record_usage(resp)
+        if not resp.ok:
+            raise GraphAPIError(
+                f"POST {path} -> {resp.status_code}: {redact(resp.text)}",
+                status_code=resp.status_code, **_error_fields(resp.text),
+            )
+        return resp.json()
+
+    def send_private_reply(self, ig_user_id: str, comment_id: str, message: str, token: str) -> dict:
+        """Send the single allowed private reply addressed to an Instagram comment."""
+        if not message or not message.strip():
+            raise ValueError("private reply message must not be empty")
+        return self._post_json(
+            f"{ig_user_id}/messages",
+            {"recipient": {"comment_id": comment_id}, "message": {"text": message}},
+            token,
+        )
+
+    def reply_to_comment(self, comment_id: str, message: str, token: str) -> str:
+        """Publish a public threaded reply to an Instagram comment."""
+        if not message or not message.strip():
+            raise ValueError("comment reply message must not be empty")
+        return self._post(
+            f"{comment_id}/replies", {"message": message, "access_token": token}
+        )["id"]
+
     def create_comment(self, media_id: str, message: str, token: str) -> str:
         """Post a comment on a published media. Returns the comment id.
 
