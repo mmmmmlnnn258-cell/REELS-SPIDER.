@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
      ON CONFLICT(channel_id, media_id) DO UPDATE SET
        keywords_json=excluded.keywords_json, link_url=excluded.link_url,
        private_reply_text=excluded.private_reply_text, public_reply_text=excluded.public_reply_text,
-       updated_at=excluded.updated_at`
+       enabled=0, last_polled_at=NULL, last_error=NULL, updated_at=excluded.updated_at`
   ).run(channelId, mediaId, JSON.stringify(keywords), link || null, privateText || null, publicText || null, now, now);
   const rule = db.prepare(
     `SELECT r.id, r.channel_id, r.media_id, r.keywords_json, r.link_url,
