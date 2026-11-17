@@ -20,7 +20,7 @@ RUN python3 -m venv /opt/worker-venv \
 
 # Install dashboard dependencies with the committed lockfile.
 COPY dashboard/package.json dashboard/package-lock.json /app/dashboard/
-RUN cd /app/dashboard && npm ci
+RUN cd /app/dashboard && npm ci --include=dev
 
 # Include migrations, worker, and dashboard in the same image.
 COPY . /app
