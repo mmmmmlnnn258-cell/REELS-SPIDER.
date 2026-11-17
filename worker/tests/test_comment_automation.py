@@ -82,3 +82,20 @@ def test_own_comment_is_skipped():
     run_comment_automation(conn, None, datetime(2026,11,17,11,tzinfo=timezone.utc),
                            client_for=lambda _: client)
     assert conn.execute("SELECT COUNT(*) FROM instagram_comment_events").fetchone()[0] == 0
+
+def test_private_replies_are_bounded_per_worker_cycle():
+    conn = database()
+    comments = [
+        {"id": f"c{i}", "text": "تم", "from": {"id": f"person-{i}"}}
+        for i in range(20)
+    ]
+    client = FakeClient(comments)
+    run_comment_automation(
+        conn, None, datetime(2026,11,17,11,tzinfo=timezone.utc),
+        client_for=lambda _: client,
+    )
+    assert len(client.private) == 15
+    assert conn.execute(
+        "SELECT COUNT(*) FROM instagram_comment_events WHERE status='sent'"
+    ).fetchone()[0] == 15
+
