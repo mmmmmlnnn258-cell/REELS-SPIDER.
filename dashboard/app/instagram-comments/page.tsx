@@ -22,7 +22,14 @@ export default function InstagramCommentsPage() {
   const rules = getDb().prepare(
     `SELECT r.id, r.channel_id, r.media_id, r.keywords_json, r.link_url,
             r.private_reply_text, r.public_reply_text, r.enabled, r.last_polled_at,
-            r.last_error, c.account_name
+            r.last_error, c.account_name,
+            (SELECT COUNT(*) FROM instagram_comment_events e
+              WHERE e.rule_id = r.id AND e.status = 'sent') AS sent_count,
+            (SELECT COUNT(*) FROM instagram_comment_events e
+              WHERE e.rule_id = r.id AND e.status = 'unknown') AS unknown_count,
+            (SELECT e.last_error FROM instagram_comment_events e
+              WHERE e.rule_id = r.id AND e.status = 'unknown' AND e.last_error IS NOT NULL
+              ORDER BY e.updated_at DESC LIMIT 1) AS last_send_error
        FROM instagram_comment_rules r
        JOIN channels c ON c.id = r.channel_id
       ORDER BY r.created_at DESC, r.id DESC`
@@ -30,6 +37,7 @@ export default function InstagramCommentsPage() {
     id: number; channel_id: number; media_id: string; keywords_json: string;
     link_url: string | null; private_reply_text: string | null; public_reply_text: string | null;
     enabled: number; last_polled_at: string | null; last_error: string | null; account_name: string;
+    sent_count: number; unknown_count: number; last_send_error: string | null;
   }>;
   return (
     <div>
