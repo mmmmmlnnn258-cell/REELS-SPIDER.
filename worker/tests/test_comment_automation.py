@@ -118,3 +118,16 @@ def test_private_replies_respect_account_hourly_safety_limit():
         "SELECT COUNT(*) FROM instagram_comment_events WHERE comment_id='new-comment'"
     ).fetchone()[0] == 0
 
+
+def test_arabic_trigger_matching_ignores_diacritics_and_tatweel():
+    from worker.comment_automation import _matches
+
+    assert _matches("تَمَّ أرسل الرابط", ["تم"])
+    assert _matches("الرابــــط لو سمحت", ["الرابط"])
+
+
+def test_arabic_trigger_matching_does_not_match_inside_another_word():
+    from worker.comment_automation import _matches
+
+    assert not _matches("هذا متمم للنص", ["تم"])
+
