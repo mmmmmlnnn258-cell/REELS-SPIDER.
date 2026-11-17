@@ -8,6 +8,7 @@ type Rule = {
   id: number; channel_id: number; media_id: string; keywords: string[];
   link_url: string | null; private_reply_text: string | null; public_reply_text: string | null;
   enabled: number; last_polled_at: string | null; last_error: string | null; account_name: string;
+  sent_count: number; unknown_count: number; last_send_error: string | null;
 };
 
 export function InstagramCommentRules({ channels, reels, initialRules }: {
@@ -108,7 +109,9 @@ export function InstagramCommentRules({ channels, reels, initialRules }: {
             </div>
             <p className="mt-2 text-sm text-muted">الكلمات: {rule.keywords.join("، ")}</p>
             <p className="mt-1 text-xs text-muted">آخر فحص: {rule.last_polled_at ? new Date(rule.last_polled_at).toLocaleString() : "لم يبدأ بعد"}</p>
-            {rule.last_error ? <p className="mt-2 text-xs text-red-600">{rule.last_error}</p> : null}
+            <p className="mt-1 text-xs text-muted">الردود الناجحة: {rule.sent_count} · نتائج تحتاج مراجعة: {rule.unknown_count}</p>
+            {rule.last_error ? <p className="mt-2 text-xs text-red-600">خطأ فحص: {rule.last_error}</p> : null}
+            {rule.last_send_error ? <p className="mt-2 text-xs text-red-600">آخر خطأ إرسال: {rule.last_send_error}</p> : null}
           </article>
         ))}
       </section>
