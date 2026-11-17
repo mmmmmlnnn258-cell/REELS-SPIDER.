@@ -48,17 +48,32 @@ def _render(template: str, *, link: str, username: str, media_id: str) -> str:
 
 def _claim_event(conn: sqlite3.Connection, comment_id: str, rule: sqlite3.Row,
                  channel_id: int, media_id: str, comment_text: str, now_iso: str) -> bool:
-    try:
+    cursor = conn.execute(
+        """INSERT OR IGNORE INTO instagram_comment_events
+           (comment_id, rule_id, channel_id, media_id, comment_text, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'processing', ?, ?)""",
+        (comment_id, rule["id"], channel_id, media_id, comment_text, now_iso, now_iso),
+    )
+    if cursor.rowcount:
+        conn.commit()
+        return True
+    # Older versions stored non-matching comments as ignored. If the owner later edits
+    # the rule's keywords, allow those comments to be evaluated again; sent/unknown/
+    # processing events remain permanently deduplicated.
+    existing = conn.execute(
+        "SELECT rule_id, status FROM instagram_comment_events WHERE comment_id=?",
+        (comment_id,),
+    ).fetchone()
+    if existing and existing["rule_id"] == rule["id"] and existing["status"] == "ignored":
         conn.execute(
-            """INSERT INTO instagram_comment_events
-               (comment_id, rule_id, channel_id, media_id, comment_text, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, 'processing', ?, ?)""",
-            (comment_id, rule["id"], channel_id, media_id, comment_text, now_iso, now_iso),
+            """UPDATE instagram_comment_events
+               SET status='processing', comment_text=?, last_error=NULL, updated_at=?
+               WHERE comment_id=?""",
+            (comment_text, now_iso, comment_id),
         )
         conn.commit()
         return True
-    except sqlite3.IntegrityError:
-        return False
+    return False
 
 
 def run_comment_automation(conn, config, now=None, logger=None, client_for=None) -> int:
@@ -121,16 +136,13 @@ def run_comment_automation(conn, config, now=None, logger=None, client_for=None)
                         continue
                     text = str(comment.get("text") or "")
                     username = str(author.get("username") or comment.get("username") or "")
-                    if not _claim_event(conn, comment_id, rule, rule["channel_id"],
-                                        media_id, text, now_iso):
-                        continue
+                    # Match before claiming: irrelevant comments should not be stored as
+                    # processed, otherwise adding a new keyword later can never match them.
                     keywords = json.loads(rule["keywords_json"] or "[]")
                     if not _matches(text, keywords):
-                        conn.execute(
-                            "UPDATE instagram_comment_events SET status='ignored', updated_at=? WHERE comment_id=?",
-                            (now_iso, comment_id),
-                        )
-                        conn.commit()
+                        continue
+                    if not _claim_event(conn, comment_id, rule, rule["channel_id"],
+                                        media_id, text, now_iso):
                         continue
                     stamp = comment.get("timestamp")
                     if stamp:
