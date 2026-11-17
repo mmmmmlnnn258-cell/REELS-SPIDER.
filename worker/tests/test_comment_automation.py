@@ -72,7 +72,7 @@ def test_nonmatching_comment_is_marked_ignored():
     client = FakeClient([{"id":"c2","text":"جميل","from":{"id":"person-2"}}])
     run_comment_automation(conn, None, datetime(2026,11,17,11,tzinfo=timezone.utc),
                            client_for=lambda _: client)
-    assert conn.execute("SELECT status FROM instagram_comment_events").fetchone()[0] == "ignored"
+    assert conn.execute("SELECT COUNT(*) FROM instagram_comment_events").fetchone()[0] == 0
     assert client.private == []
 
 
@@ -131,3 +131,18 @@ def test_arabic_trigger_matching_does_not_match_inside_another_word():
 
     assert not _matches("هذا متمم للنص", ["تم"])
 
+
+
+def test_comment_that_did_not_match_can_match_after_rule_keywords_change():
+    conn = database()
+    client = FakeClient([{"id":"c4","text":"جميل","from":{"id":"person-4"}}])
+    now = datetime(2026,11,17,11,tzinfo=timezone.utc)
+    run_comment_automation(conn, None, now, client_for=lambda _: client)
+    assert conn.execute("SELECT COUNT(*) FROM instagram_comment_events").fetchone()[0] == 0
+
+    conn.execute("UPDATE instagram_comment_rules SET keywords_json=?", (json.dumps(["جميل"]),))
+    conn.execute("UPDATE instagram_comment_rules SET last_polled_at=NULL")
+    conn.commit()
+    run_comment_automation(conn, None, now, client_for=lambda _: client)
+    assert len(client.private) == 1
+    assert conn.execute("SELECT status FROM instagram_comment_events").fetchone()[0] == "sent"
