@@ -113,7 +113,7 @@ def run_thumbnails(conn, config, client=None, now=None, logger=None,
     """Fetch missing thumbnails for every active channel. Returns the count stored."""
     from .media_sync import CallBudget
 
-    pick_client = client_for or (lambda _platform: client)
+    pick_client = client_for or (lambda _channel: client)
     budget = CallBudget(config.thumbnail_max_per_cycle, config.insights_usage_pct_ceiling)
     asset_dir = Path(config.asset_storage_dir)
     now_iso = (now.isoformat() if now else None)
@@ -124,7 +124,7 @@ def run_thumbnails(conn, config, client=None, now=None, logger=None,
         if not due:
             continue
         try:
-            http = pick_client(channel["platform"])
+            http = pick_client(channel)
         except Exception as exc:  # noqa: BLE001 — one bad channel must not stop the rest
             # UnknownPlatform when a channel's platform is missing from the client
             # registries. A thumbnail is decoration; losing every OTHER channel's
