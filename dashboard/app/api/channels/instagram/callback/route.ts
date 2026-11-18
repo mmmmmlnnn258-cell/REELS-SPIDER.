@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectInstagramChannel, getChannel } from "@/lib/queries";
 import { config, instagramCredentials } from "@/lib/config";
-import {
-  INSTAGRAM_GRAPH_BASE,
-  instagramCallbackUri,
-} from "@/lib/instagram-oauth";
+import { instagramCallbackUri } from "@/lib/instagram-oauth";
 
 export const runtime = "nodejs";
 
