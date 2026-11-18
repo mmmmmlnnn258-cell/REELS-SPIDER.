@@ -106,6 +106,8 @@ def test_video_update_creates_reel_and_scheduled_publication_for_first_connected
     assert result == "processed"
     post = conn.execute("SELECT * FROM posts").fetchone()
     assert post["post_type"] == "video"
+    assert post["content_kind"] == "one_time"
+    assert post["content_status"] == "ready"
     assert post["caption"] == "Test Reel caption"
     asset = conn.execute(
         """SELECT a.* FROM assets a
