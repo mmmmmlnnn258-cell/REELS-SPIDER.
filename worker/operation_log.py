@@ -44,21 +44,29 @@ def _notify_once(conn, row, config, logger=None):
     if status == "dry_run":
         return
     icon = {"success": "✅", "retrying": "⚠️", "failed": "❌", "info": "ℹ️"}.get(status, "ℹ️")
-    heading = (
-        "تم تسليم الفيديو إلى صندوق النشر؛ لم يتم نشره على الحساب بعد"
-        if row["event_type"] == "تسليم لصندوق النشر" else {
-            "success": "تم النشر بنجاح",
-            "retrying": "تعذرت محاولة النشر — ستتم إعادة المحاولة",
-            "failed": "فشل النشر نهائياً",
-            "info": "تحديث معلوماتي",
-        }.get(status, "تحديث عملية")
-    )
+    if row["event_type"] == "رسالة خاصة يدوية":
+        heading = (
+            "أكدت Meta إرسال الرد اليدوي بنجاح"
+            if status == "success" else "نتيجة إرسال الرد اليدوي غير مؤكدة"
+        )
+        subject_label = "نص الرد"
+    else:
+        heading = (
+            "تم تسليم الفيديو إلى صندوق النشر؛ لم يتم نشره على الحساب بعد"
+            if row["event_type"] == "تسليم لصندوق النشر" else {
+                "success": "تم النشر بنجاح",
+                "retrying": "تعذرت محاولة النشر — ستتم إعادة المحاولة",
+                "failed": "فشل النشر نهائياً",
+                "info": "تحديث معلوماتي",
+            }.get(status, "تحديث عملية")
+        )
+        subject_label = "المنشور"
     caption = (row["caption"] or "بدون وصف").replace("\n", " ")[:180]
     message = (
         f"{icon} BLACK SPIDER\n{heading}\n"
         f"العملية: {row['event_type']} · #{row['publication_id'] or '—'}\n"
         f"القناة: {row['channel_name'] or 'غير محددة'}\n"
-        f"المنشور: {caption}\n"
+        f"{subject_label}: {caption}\n"
         f"التفاصيل: {(row['detail'] or 'لا توجد تفاصيل إضافية')[:900]}"
     )
     try:
@@ -270,7 +278,9 @@ def retry_pending_notifications(conn, config, *, logger=None, limit: int = 20):
         parameters.extend((chat_id, chat_id, retry_before))
     rows = conn.execute(
         """SELECT event.* FROM telegram_operation_log event
-            WHERE event.notified_at IS NULL AND event.status IN ('success','retrying','failed')
+            WHERE event.notified_at IS NULL
+              AND (event.status IN ('success','retrying','failed')
+                   OR (event.event_type='رسالة خاصة يدوية' AND event.status='info'))
               AND (%s)
             ORDER BY event.created_at ASC,event.id ASC LIMIT ?""" % " OR ".join(eligibility),
         (*parameters, max(1, min(int(limit), 100))),
@@ -328,3 +338,12 @@ def record_control_operation(conn, update_id: int, event_type: str, detail: str,
         channel_name=channel_name, caption=caption, detail=detail,
         created_at=(now or datetime.now(timezone.utc)).isoformat(),
     )
+
+
+def mark_operation_notified(conn, event_id: int, *, now=None):
+    """Mark an operation as acknowledged by its direct Telegram response."""
+    with conn:
+        conn.execute(
+            "UPDATE telegram_operation_log SET notified_at=? WHERE id=? AND notified_at IS NULL",
+            ((now or datetime.now(timezone.utc)).isoformat(), event_id),
+        )
