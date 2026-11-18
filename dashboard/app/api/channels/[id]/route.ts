@@ -57,21 +57,15 @@ export async function PATCH(
       { status: 400 }
     );
   }
+  // The auth method selects the Graph API host and token lifecycle. It must only
+  // change inside connectInstagramChannel(), which stores the verified account id,
+  // token, expiry, and method atomically after OAuth. A generic PATCH must never
+  // leave an old credential paired with a new API host.
   if ("instagram_auth_method" in body) {
-    if (
-      existingChannel.platform !== "instagram" ||
-      !["legacy", "facebook_login", "instagram_login"].includes(body.instagram_auth_method)
-    ) {
-      return NextResponse.json(
-        { error: "Invalid Instagram login method for this channel." },
-        { status: 400 }
-      );
-    }
-    fields.instagram_auth_method = body.instagram_auth_method;
-    if (body.instagram_auth_method !== existingChannel.instagram_auth_method) {
-      fields.token_error = null;
-      fields.token_next_check_at = null;
-    }
+    return NextResponse.json(
+      { error: "Instagram login method can only be changed by completing Instagram OAuth." },
+      { status: 400 }
+    );
   }
   if ("remote_account_id" in body) fields.remote_account_id = body.remote_account_id || null;
   if ("linked_page_id" in body) fields.linked_page_id = body.linked_page_id || null;
