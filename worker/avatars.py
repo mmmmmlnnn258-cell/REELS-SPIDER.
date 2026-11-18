@@ -189,7 +189,7 @@ def run_avatars(conn, config, client, now, *, logger=None, client_for=None) -> i
     job must never raise, and must never leave a channel without the photo it already had.
     """
     now_iso = now.isoformat()
-    pick_client = client_for or (lambda _platform: client)
+    pick_client = client_for or (lambda _channel: client)
     try:
         due = channels_needing_avatars(conn, now, Path(config.asset_storage_dir))
     except Exception as exc:  # noqa: BLE001 — selection itself must never kill the daemon
@@ -205,7 +205,7 @@ def run_avatars(conn, config, client, now, *, logger=None, client_for=None) -> i
         channel_id = channel["id"]
         try:
             fetch_url = _URL_FETCHERS[channel["platform"]]
-            url = fetch_url(pick_client(channel["platform"]), channel)
+            url = fetch_url(pick_client(channel), channel)
 
             if not url:
                 # The account genuinely has no photo (or Meta returned its default
