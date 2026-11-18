@@ -383,8 +383,8 @@ def test_one_failing_channel_does_not_stop_the_others(conn, config):
         def get_threads_user_media(self, *a, **kw):
             raise RuntimeError("token expired for access_token=SECRET")
 
-    def client_for(platform):
-        return Boom([[]]) if platform == "threads" else FakeMediaClient([[_item("a")]])
+    def client_for(channel):
+        return Boom([[]]) if channel["platform"] == "threads" else FakeMediaClient([[_item("a")]])
 
     synced = run_media_sync(conn, config, now=NOW, client_for=client_for)
 
