@@ -267,12 +267,13 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
                 continue
             rows = graph.get_instagram_conversations(messaging_id, channel["access_token"], limit=15)
             lines.append(f"\n{channel['account_name']}: {len(rows)} محادثة")
+            own_ids = {str(channel["remote_account_id"] or ""), str(channel["linked_page_id"] or "")}
             for conv in rows[:8]:
                 cid = str(conv.get("id") or "")
                 if not cid or len(cid) > 512:
                     continue
                 people = (conv.get("participants") or {}).get("data") or []
-                peer = next((p for p in people if str(p.get("id") or "") != str(channel["remote_account_id"])), {})
+                peer = next((p for p in people if str(p.get("id") or "") not in own_ids), {})
                 username = peer.get("username") or "مستخدم"
                 with conn:
                     ref = conn.execute(
@@ -308,7 +309,8 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
             return
         conversation, messages = graph.get_instagram_conversation_messages(conversation_id, channel["access_token"])
         people = (conversation.get("participants") or {}).get("data") or []
-        peer = next((p for p in people if str(p.get("id") or "") != str(channel["remote_account_id"])), {})
+        own_ids = {str(channel["remote_account_id"] or ""), str(channel["linked_page_id"] or "")}
+        peer = next((p for p in people if str(p.get("id") or "") not in own_ids), {})
         recipient = str(peer.get("id") or "")
         if not recipient:
             _send(client, token, chat_id, "تعذر تحديد مستلم المحادثة؛ لم يتم تجهيز إرسال.", _menu())
@@ -316,7 +318,7 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
         lines = [f"✉️ {peer.get('username') or recipient} · {channel['account_name']}"]
         for msg in messages[-10:]:
             sender = msg.get("from") or {}
-            who = "حسابك" if str(sender.get("id") or "") == str(channel["remote_account_id"]) else (sender.get("username") or "العميل")
+            who = "حسابك" if str(sender.get("id") or "") in own_ids else (sender.get("username") or "العميل")
             lines.append(f"\n{who}: {str(msg.get('message') or '[مرفق أو رسالة بلا نص]')[:650]}")
         with conn:
             conn.execute("""INSERT INTO telegram_dm_reply_sessions
