@@ -17,7 +17,8 @@ export async function PATCH(
 ) {
   const { id } = await params;
   const channelId = Number(id);
-  if (!getChannel(channelId)) {
+  const existingChannel = getChannel(channelId);
+  if (!existingChannel) {
     return NextResponse.json({ error: "Channel not found." }, { status: 404 });
   }
   // A parsed JSON body genuinely has no known shape; every field below is validated
@@ -55,6 +56,22 @@ export async function PATCH(
       { error: "Change the timezone via POST /api/channels/[id]/timezone." },
       { status: 400 }
     );
+  }
+  if ("instagram_auth_method" in body) {
+    if (
+      existingChannel.platform !== "instagram" ||
+      !["legacy", "facebook_login", "instagram_login"].includes(body.instagram_auth_method)
+    ) {
+      return NextResponse.json(
+        { error: "Invalid Instagram login method for this channel." },
+        { status: 400 }
+      );
+    }
+    fields.instagram_auth_method = body.instagram_auth_method;
+    if (body.instagram_auth_method !== existingChannel.instagram_auth_method) {
+      fields.token_error = null;
+      fields.token_next_check_at = null;
+    }
   }
   if ("remote_account_id" in body) fields.remote_account_id = body.remote_account_id || null;
   if ("linked_page_id" in body) fields.linked_page_id = body.linked_page_id || null;
