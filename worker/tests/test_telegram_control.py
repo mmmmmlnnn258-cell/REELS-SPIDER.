@@ -1,0 +1,93 @@
+from dataclasses import replace
+
+from worker.telegram_control import process_control_update
+
+
+class FakeTelegram:
+    def __init__(self):
+        self.messages = []
+        self.answered = []
+
+    def send_message(self, token, chat_id, text, reply_markup=None):
+        self.messages.append((chat_id, text, reply_markup))
+        return {"message_id": len(self.messages)}
+
+    def answer_callback_query(self, token, callback_query_id, text=None):
+        self.answered.append((callback_query_id, text))
+        return {}
+
+
+def cfg(config, allowed="7441755677"):
+    return replace(config, telegram_bot_token="test-token",
+                   telegram_allowed_chat_ids=allowed)
+
+
+def callback(update_id=1, chat_id=7441755677, data="bs:menu", chat_type="private"):
+    return {"update_id": update_id, "callback_query": {
+        "id": f"cb-{update_id}", "data": data,
+        "from": {"id": chat_id},
+        "message": {"message_id": 10, "chat": {"id": chat_id, "type": chat_type}},
+    }}
+
+
+def test_start_sends_menu_only_to_allowlisted_private_chat(conn, config):
+    client = FakeTelegram()
+    update = {"update_id": 1, "message": {
+        "text": "/start", "chat": {"id": 7441755677, "type": "private"}}}
+    assert process_control_update(conn, cfg(config), client, update)
+    assert client.messages[0][0] == "7441755677"
+    assert client.messages[0][2]["inline_keyboard"]
+
+
+def test_unauthorized_callback_cannot_read_or_change_anything(conn, config):
+    client = FakeTelegram()
+    assert process_control_update(conn, cfg(config), client,
+                                   callback(chat_id=999, data="bs:comment:1"))
+    assert client.messages == []
+    assert client.answered == [("cb-1", "غير مصرح")]
+
+
+def test_group_callback_is_rejected_even_if_group_id_is_allowlisted(conn, config):
+    client = FakeTelegram()
+    assert process_control_update(conn, cfg(config, allowed="-1001"), client,
+                                   callback(chat_id=-1001, chat_type="group"))
+    assert client.messages == []
+
+
+def test_status_callback_returns_counts_without_exposing_credentials(conn, config):
+    client = FakeTelegram()
+    conn.execute("INSERT INTO worker_heartbeat(id,last_seen_at) VALUES (1,'2026-11-18T00:00:00Z')")
+    conn.commit()
+    assert process_control_update(conn, cfg(config), client, callback(data="bs:status"))
+    text = client.messages[0][1]
+    assert "آخر نبضة Worker" in text
+    assert "قنوات Instagram" in text
+    assert "test-token" not in text
+
+
+def test_comment_rule_toggle_changes_only_selected_active_instagram_rule(conn, config):
+    cur = conn.execute(
+        """INSERT INTO channels(platform, account_name, remote_account_id, access_token, is_active)
+           VALUES ('instagram','test','ig-1','secret',1)"""
+    )
+    channel_id = cur.lastrowid
+    cur = conn.execute(
+        """INSERT INTO instagram_comment_rules(channel_id,media_id,keywords_json,enabled)
+           VALUES (?, 'media-1', '[]', 0)""", (channel_id,)
+    )
+    rule_id = cur.lastrowid
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(conn, cfg(config), client,
+                                   callback(data=f"bs:comment:{rule_id}"))
+    assert conn.execute("SELECT enabled FROM instagram_comment_rules WHERE id=?",
+                        (rule_id,)).fetchone()[0] == 1
+    assert "تم تشغيل" in client.messages[0][1]
+
+
+def test_start_without_allowlist_preserves_chat_id_discovery(conn, config):
+    client = FakeTelegram()
+    update = {"update_id": 1, "message": {
+        "text": "/start", "chat": {"id": 42, "type": "private"}}}
+    assert process_control_update(conn, cfg(config, allowed=""), client, update) is False
+    assert client.messages == []
