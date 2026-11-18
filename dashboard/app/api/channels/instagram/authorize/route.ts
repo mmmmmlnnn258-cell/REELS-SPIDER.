@@ -51,7 +51,7 @@ export function GET(req: NextRequest) {
   if (graphBase !== "https://graph.instagram.com") {
     return channelPage(
       req,
-      "Instagram Login needs META_GRAPH_BASE=https://graph.instagram.com before connecting. No channel credentials were changed.",
+      "Instagram Login is not enabled because META_GRAPH_BASE is an installation-wide setting currently pointing to Facebook Login. Changing it may break existing Instagram channels; no channel credentials were changed. Per-channel login support is required before this connection can proceed.",
     );
   }
 
