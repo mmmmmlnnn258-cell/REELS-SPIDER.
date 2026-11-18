@@ -42,8 +42,8 @@ def process_control_update(conn, config, client, update: dict) -> bool:
         data = str(callback.get("data", ""))
         sender = callback.get("from") or {}
         sender_id = str(sender.get("id", ""))
-        if (not chat_id or chat_id not in allowed or chat.get("type") != "private"
-                or not sender_id or sender_id != chat_id):
+        if (update_id is None or not chat_id or chat_id not in allowed
+                or chat.get("type") != "private" or not sender_id or sender_id != chat_id):
             if query_id:
                 client.answer_callback_query(token, query_id, "غير مصرح")
             return True
@@ -88,6 +88,8 @@ def process_control_update(conn, config, client, update: dict) -> bool:
                 """SELECT r.id, r.media_id, r.enabled, c.account_name
                      FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id
                     WHERE c.platform='instagram' AND c.is_active=1
+                      AND c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id)<>''
+                      AND c.access_token IS NOT NULL AND TRIM(c.access_token)<>''
                     ORDER BY r.id DESC LIMIT 8"""
             ).fetchall()
             if not rows:
@@ -109,7 +111,9 @@ def process_control_update(conn, config, client, update: dict) -> bool:
             row = conn.execute(
                 """SELECT r.enabled FROM instagram_comment_rules r
                      JOIN channels c ON c.id=r.channel_id
-                    WHERE r.id=? AND c.platform='instagram' AND c.is_active=1""",
+                    WHERE r.id=? AND c.platform='instagram' AND c.is_active=1
+                      AND c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id)<>''
+                      AND c.access_token IS NOT NULL AND TRIM(c.access_token)<>''""",
                 (rule_id,),
             ).fetchone()
             if row is None:
