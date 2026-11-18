@@ -1,13 +1,12 @@
-"""Which Graph API host to talk to, per channel platform.
+"""Resolve API clients by platform and, for Instagram, per-channel login method.
 
-META_GRAPH_BASE is a per-INSTALL setting, but the correct host is really a per-PLATFORM
-fact: Facebook Pages always live on graph.facebook.com, while Instagram may be reached
-via graph.facebook.com (Facebook-Login path) or graph.instagram.com (Instagram-Login
-path) depending on how this install is set up. So FB pins its own host and IG keeps
-whatever the install configured — which lets one install mix IG and FB channels.
+Explicit Instagram Facebook Login channels use graph.facebook.com; explicit Instagram
+Login channels use graph.instagram.com. Rows from before migration 0038 are marked
+legacy and retain their historical META_GRAPH_BASE behavior until reconnected or
+classified. Facebook Pages remain pinned to graph.facebook.com regardless.
 
-Clients are cached per base URL: they hold a requests.Session, so reusing them keeps
-connection pooling and avoids rebuilding one per publication.
+Clients are cached by platform, base URL and API version so mixed Instagram login paths
+cannot share a client accidentally.
 """
 
 from __future__ import annotations
