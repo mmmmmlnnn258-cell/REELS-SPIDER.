@@ -757,13 +757,24 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 with conn:
                     conn.execute("UPDATE telegram_dm_outbox SET status='sent',meta_message_id=?,updated_at=? WHERE id=?",
                                  (meta_message_id, datetime.now(timezone.utc).isoformat(), outbox_id))
+                from .operation_log import record_manual_dm_outcome
+                record_manual_dm_outcome(
+                    conn, outbox_id, status="success",
+                    detail=f"أكدت Meta الإرسال. معرّف الرسالة: {meta_message_id}",
+                )
                 _send(client, token, chat_id, f"✅ أكدت Meta إرسال الرد بنجاح. رقم الرسالة: {meta_message_id}", _menu())
             except Exception as exc:
                 from .redact import redact
+                safe_error = redact(str(exc))[:500]
                 with conn:
                     conn.execute("UPDATE telegram_dm_outbox SET status='unknown',last_error=?,updated_at=? WHERE id=?",
-                                 (redact(str(exc))[:500], datetime.now(timezone.utc).isoformat(), outbox_id))
-                _send(client, token, chat_id, "⚠️ نتيجة الإرسال غير مؤكدة. لن نعيد المحاولة تلقائياً لتجنب تكرار الرسالة.\n" + redact(str(exc))[:300], _menu())
+                                 (safe_error, datetime.now(timezone.utc).isoformat(), outbox_id))
+                from .operation_log import record_manual_dm_outcome
+                record_manual_dm_outcome(
+                    conn, outbox_id, status="info",
+                    detail=f"نتيجة الإرسال غير مؤكدة؛ لم تتم إعادة المحاولة تلقائياً. {safe_error}",
+                )
+                _send(client, token, chat_id, "⚠️ نتيجة الإرسال غير مؤكدة. لن نعيد المحاولة تلقائياً لتجنب تكرار الرسالة.\n" + safe_error[:300], _menu())
             return True
         if data.startswith("bs:comment:fetch:"):
             raw_id = data.removeprefix("bs:comment:fetch:")
