@@ -20,6 +20,7 @@ class FakeTelegram:
 class FakeGraph:
     def __init__(self, fail=False):
         self.fail = fail
+        self.base = "https://graph.instagram.com/v25.0"
         self.sent = []
         self.conversations = [{
             "id": "9001", "updated_time": "2026-11-18T12:00:00+0000",
