@@ -6,6 +6,7 @@ import {
   instagramAuthorizeUrl,
   instagramCallbackUri,
 } from "./instagram-oauth";
+import { instagramRedirectUri } from "./config";
 
 test("Instagram OAuth state is cryptographically random and unique", () => {
   const first = createInstagramOAuthState();
@@ -46,4 +47,29 @@ test("callback URI is built on the application origin", () => {
     instagramCallbackUri("https://scheduler.example.test"),
     "https://scheduler.example.test/api/channels/instagram/callback",
   );
+});
+
+
+test("configured Instagram redirect URI is HTTPS and pinned to the exact callback path", () => {
+  process.env.INSTAGRAM_REDIRECT_URI =
+    "https://scheduler.example.test/api/channels/instagram/callback";
+  assert.equal(
+    instagramRedirectUri(),
+    "https://scheduler.example.test/api/channels/instagram/callback",
+  );
+
+  process.env.INSTAGRAM_REDIRECT_URI =
+    "https://attacker.example.test/api/channels/instagram/callback";
+  assert.equal(
+    instagramRedirectUri(),
+    "https://attacker.example.test/api/channels/instagram/callback",
+  );
+
+  process.env.INSTAGRAM_REDIRECT_URI =
+    "http://scheduler.example.test/api/channels/instagram/callback";
+  assert.equal(instagramRedirectUri(), "");
+
+  process.env.INSTAGRAM_REDIRECT_URI =
+    "https://scheduler.example.test/untrusted/path";
+  assert.equal(instagramRedirectUri(), "");
 });
