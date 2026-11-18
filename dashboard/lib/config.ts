@@ -169,6 +169,36 @@ export function instagramCredentials(): { clientId: string; clientSecret: string
   };
 }
 
+/**
+ * The exact public OAuth callback registered with Meta. Never derive this from
+ * request Host / forwarded-host headers: those are request-controlled in some
+ * proxy configurations and must not influence an OAuth redirect_uri.
+ */
+export function instagramRedirectUri(): string {
+  const env = liveEnv();
+  const raw = process.env.INSTAGRAM_REDIRECT_URI ?? env.INSTAGRAM_REDIRECT_URI ?? "";
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    const localHttp =
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1");
+    if (
+      (url.protocol !== "https:" && !localHttp) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      url.pathname !== "/api/channels/instagram/callback"
+    ) {
+      return "";
+    }
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
 // Same semantics as worker/config.py's _as_bool: an explicit allow-list ("1", "true",
 // "yes", "on", case-insensitive) turns the switch on; anything else present (including
 // "0", "false", "off", "no", blank, or garbage like "2") turns it off. Only a genuinely
