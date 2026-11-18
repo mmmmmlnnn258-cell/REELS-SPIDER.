@@ -303,7 +303,7 @@ def test_registry_mismatch_failure_is_recorded_and_notified(
     monkeypatch.setenv("KILL_SWITCH", "0")
     monkeypatch.setenv("DRY_RUN", "0")
     monkeypatch.setattr("worker.run.load_env", lambda override=False: None)
-    monkeypatch.setitem(publisher._PUBLISHERS, "mystery-platform", object())
+    monkeypatch.delitem(__import__("worker.clients", fromlist=["_BASE_URLS"])._BASE_URLS, "instagram")
 
     class FakeTelegram:
         def __init__(self):
@@ -317,10 +317,10 @@ def test_registry_mismatch_failure_is_recorded_and_notified(
     monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
     cfg = replace(config, telegram_bot_token="test-token",
                   telegram_allowed_chat_ids="7441755677")
-    pub = make_publication(platform="mystery-platform", n_assets=1)
+    pub = make_publication(platform="instagram", n_assets=1)
 
     def client_for(_platform):
-        raise UnknownPlatform("mystery-platform")
+        raise UnknownPlatform("instagram")
 
     assert run_once(conn, cfg, fake_client, client_for=client_for, now=NOW) == 1
     row = conn.execute(
@@ -346,7 +346,7 @@ def test_registry_mismatch_during_dry_run_does_not_fail_or_alert(
     monkeypatch.setenv("KILL_SWITCH", "0")
     monkeypatch.setenv("DRY_RUN", "1")
     monkeypatch.setattr("worker.run.load_env", lambda override=False: None)
-    monkeypatch.setitem(publisher._PUBLISHERS, "mystery-platform", object())
+    monkeypatch.delitem(__import__("worker.clients", fromlist=["_BASE_URLS"])._BASE_URLS, "instagram")
 
     class FakeTelegram:
         def __init__(self):
@@ -360,10 +360,10 @@ def test_registry_mismatch_during_dry_run_does_not_fail_or_alert(
     monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
     cfg = replace(config, telegram_bot_token="test-token",
                   telegram_allowed_chat_ids="7441755677")
-    pub = make_publication(platform="mystery-platform", n_assets=1)
+    pub = make_publication(platform="instagram", n_assets=1)
 
     def client_for(_platform):
-        raise UnknownPlatform("mystery-platform")
+        raise UnknownPlatform("instagram")
 
     assert run_once(conn, cfg, fake_client, client_for=client_for, now=NOW) == 1
     row = conn.execute(
