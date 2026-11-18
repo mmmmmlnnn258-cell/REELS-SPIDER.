@@ -488,3 +488,19 @@ def test_schedule_list_paginates_more_than_eight_and_details_return_to_page(conn
     )
     back = [b["callback_data"] for row in client.messages[-1][2]["inline_keyboard"] for b in row]
     assert "bs:schedule:page:1" in back
+
+
+def test_schedule_menu_button_cancels_pending_date_entry(conn, config):
+    _, _, publication = _scheduled_post(conn)
+    conn.execute(
+        """INSERT INTO telegram_schedule_sessions(chat_id, publication_id, timezone, created_at)
+           VALUES ('7441755677', ?, 'Asia/Aden', ?)""",
+        (publication, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    client = FakeTelegram()
+    process_control_update(
+        conn, cfg(config), client,
+        callback(update_id=1115, data="bs:schedule"),
+    )
+    assert conn.execute("SELECT COUNT(*) FROM telegram_schedule_sessions").fetchone()[0] == 0
