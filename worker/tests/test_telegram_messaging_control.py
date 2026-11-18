@@ -349,6 +349,12 @@ def test_facebook_login_dm_uses_page_id_to_identify_own_participant(conn, config
         {"id": "page-1", "username": "our_page"},
         {"id": "person-77", "username": "customer"},
     ]
+    graph.get_instagram_conversation_messages = lambda conversation_id, token: (
+        {"id": conversation_id, "participants": graph.conversations[0]["participants"]},
+        [{"id": "m-page", "from": {"id": "page-1"}, "message": "رد الحساب"},
+         {"id": "m-peer", "from": {"id": "person-77", "username": "customer"},
+          "message": "مرحبا"}],
+    )
     client = FakeTelegram()
 
     process_control_update(
