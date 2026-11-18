@@ -61,6 +61,8 @@ export interface PeriodLink {
 }
 
 export interface Channel {
+  /** Instagram Login route used by this channel; legacy preserves pre-migration behavior. */
+  instagram_auth_method: "legacy" | "facebook_login" | "instagram_login";
   id: number;
   platform: Platform;
   account_name: string;
