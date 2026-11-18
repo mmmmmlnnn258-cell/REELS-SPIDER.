@@ -131,11 +131,15 @@ def instagram_metrics_for(media) -> list[str]:
     Keyed on media_product_type first because that is what separates a Reel from a feed
     post; media_type ('VIDEO') does not, since a feed video is not a Reel.
     """
-    extras = (
-        REELS_EXTRA_METRICS
-        if (media["media_product_type"] or "").upper() == "REELS"
-        else FEED_EXTRA_METRICS
-    )
+    surface = (media["media_product_type"] or "").upper()
+    if surface == "REELS":
+        extras = REELS_EXTRA_METRICS
+    elif surface == "FEED":
+        extras = FEED_EXTRA_METRICS
+    else:
+        # Instagram Login does not expose media_product_type. Without a reliable surface,
+        # ask only for metrics known to be shared by all media rather than guessing FEED.
+        extras = []
     return [*REQUESTED_METRICS, *extras]
 
 
