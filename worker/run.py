@@ -78,15 +78,16 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
     # sweeping that one mid-send is how you publish twice.
     lease = 0 if recover_all_claims else config.publish_claim_lease_seconds
     stale = db.recover_stale_claims(conn, now.isoformat(), lease)
-    if stale and logger:
-        # WARNING, not info: each of these is a scheduled post that did not go out, and
-        # may or may not be live on the platform. It should never scroll past unnoticed.
+    if stale:
+        from .operation_log import record_recovered_publication
         for row in stale:
-            logger.warning(
-                "[publication %s] recovered from an abandoned publish and marked FAILED "
-                "— check channel %s on the platform before retrying; it may already be live.",
-                row["id"], row["channel_id"],
-            )
+            if logger:
+                logger.warning(
+                    "[publication %s] recovered from an abandoned publish and marked FAILED "
+                    "— check channel %s on the platform before retrying; it may already be live.",
+                    row["id"], row["channel_id"],
+                )
+            record_recovered_publication(conn, row, config, logger=logger, now=now)
 
     if kill_switch_active():
         if logger:
@@ -200,9 +201,14 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
                 # validates the platform and marks this ONE publication terminally
                 # failed, so the rest of the batch still goes out.
                 pub_client = client
-            publish_one(conn, pub, config, pub_client, dry_run=dry_run,
-                        asset_base_url=asset_base_url, now=now,
-                        logger=logger, sleep_fn=sleep_fn)
+            outcome = publish_one(conn, pub, config, pub_client, dry_run=dry_run,
+                                  asset_base_url=asset_base_url, now=now,
+                                  logger=logger, sleep_fn=sleep_fn)
+            from .operation_log import record_publication_outcome
+            record_publication_outcome(
+                conn, int(pub["id"]), outcome, config, dry_run=dry_run,
+                logger=logger, now=now,
+            )
             processed += 1
 
     # Re-attempt first comments a human explicitly asked to retry from the dashboard.
