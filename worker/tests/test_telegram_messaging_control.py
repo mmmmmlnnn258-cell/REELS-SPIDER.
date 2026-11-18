@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
 from worker.telegram_control import process_control_update
 
@@ -128,7 +129,7 @@ def test_dm_reply_requires_preview_and_explicit_confirmation(conn, config):
 
 def test_dm_confirmation_is_idempotent_and_never_resends(conn, config):
     channel = connected_channel(conn)
-    now = "2026-11-18T12:00:00+00:00"
+    now = datetime.now(timezone.utc).isoformat()
     outbox = conn.execute(
         """INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,
              message_text,status,created_at,updated_at)
@@ -143,6 +144,24 @@ def test_dm_confirmation_is_idempotent_and_never_resends(conn, config):
     process_control_update(conn, cfg(config), client, update, lambda _: graph)
     assert len(graph.sent) == 1
     assert conn.execute("SELECT status FROM telegram_dm_outbox WHERE id=?", (outbox,)).fetchone()[0] == "sent"
+
+
+def test_expired_dm_preview_cannot_be_confirmed(conn, config):
+    channel = connected_channel(conn)
+    expired = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    outbox = conn.execute(
+        """INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,
+             message_text,status,created_at,updated_at)
+           VALUES('7441755677',?,'9001','person-77','hello','pending',?,?)""",
+        (channel, expired, expired),
+    ).lastrowid
+    conn.commit()
+    graph = FakeGraph()
+    client = FakeTelegram()
+    process_control_update(conn, cfg(config), client, cb(204, f"bs:dm:send:{outbox}"), lambda _: graph)
+    assert graph.sent == []
+    assert conn.execute("SELECT status FROM telegram_dm_outbox WHERE id=?", (outbox,)).fetchone()[0] == "cancelled"
+    assert "انتهت صلاحية المعاينة" in client.messages[-1][1]
 
 
 def test_dm_cancel_marks_preview_final_and_old_confirm_cannot_send(conn, config):
