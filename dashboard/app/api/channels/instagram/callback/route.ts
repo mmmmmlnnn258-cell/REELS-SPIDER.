@@ -89,7 +89,7 @@ export async function GET(req: NextRequest) {
   // Facebook Login Graph host; that would make the card look connected but fail at runtime.
   if (config.graphBase.replace(/\/+$/, "") !== INSTAGRAM_GRAPH_BASE) {
     return back(req, {
-      instagram_error: "META_GRAPH_BASE must be https://graph.instagram.com before this account can be connected. No channel credentials were changed.",
+      instagram_error: "Instagram Login is not enabled because META_GRAPH_BASE is an installation-wide setting currently pointing to Facebook Login. Changing it may break existing Instagram channels; no channel credentials were changed. Per-channel login support is required before this connection can proceed.",
     });
   }
 
