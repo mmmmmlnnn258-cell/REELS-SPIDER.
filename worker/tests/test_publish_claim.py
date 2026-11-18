@@ -184,3 +184,17 @@ def test_dry_run_is_unaffected_by_claiming(conn, config, fake_client, make_publi
 
     assert outcome.result == "dry_run"
     assert fake_client.calls == [], "a dry run sends nothing"
+
+
+
+def test_atomic_claim_is_rejected_while_global_publishing_pause_is_active(
+    conn, make_publication
+):
+    pub = make_publication(post_type="single", n_assets=1, now=NOW)
+    conn.execute("UPDATE publishing_control SET is_paused=1 WHERE id=1")
+    conn.commit()
+
+    assert db.claim_publication(conn, pub["id"], NOW.isoformat()) is False
+    assert conn.execute(
+        "SELECT status FROM publications WHERE id=?", (pub["id"],)
+    ).fetchone()[0] == "scheduled"
