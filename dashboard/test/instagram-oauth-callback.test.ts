@@ -174,3 +174,45 @@ test("declined Instagram authorization leaves channel credentials untouched", as
     globalThis.fetch = originalFetch;
   }
 });
+
+
+test("callback refuses an ambiguous Meta identity response without storing credentials", async () => {
+  const { q, GET, suffix } = await setup();
+  const channelId = q.createChannel({
+    platform: "instagram",
+    account_name: `Ambiguous identity ${suffix}`,
+    timezone: "UTC",
+    remote_account_id: "old-account-id",
+    access_token: "old-token",
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith("https://api.instagram.com/oauth/access_token")) {
+      return jsonResponse({ access_token: "short-lived-secret", expires_in: 3600 });
+    }
+    if (url.startsWith("https://graph.instagram.com/access_token?")) {
+      return jsonResponse({ access_token: "new-long-lived-secret", expires_in: 5184000 });
+    }
+    if (url.startsWith("https://graph.instagram.com/v27.0/me?")) {
+      return jsonResponse({
+        data: [
+          { user_id: "ig-user-one", username: "creator_one" },
+          { user_id: "ig-user-two", username: "creator_two" },
+        ],
+      });
+    }
+    throw new Error(`Unexpected mocked Meta URL: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const response = await GET(callbackRequest(channelId));
+    const channel = q.getChannel(channelId)!;
+    assert.match(response.headers.get("location") ?? "", /instagram_error=/);
+    assert.equal(channel.remote_account_id, "old-account-id");
+    assert.equal(channel.access_token, "old-token");
+    assert.equal(channel.instagram_auth_method, "legacy");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
