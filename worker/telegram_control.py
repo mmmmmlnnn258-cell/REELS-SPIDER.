@@ -172,25 +172,33 @@ def _schedule_detail(conn, client, token: str, chat_id: str, publication_id: int
 
 
 
-def _uses_instagram_login(graph) -> bool:
+def _uses_instagram_login(channel, graph) -> bool:
+    """Use the channel's explicit login method; only legacy rows infer from their client."""
+    keys = channel.keys() if hasattr(channel, "keys") else ()
+    method = channel["instagram_auth_method"] if "instagram_auth_method" in keys else "legacy"
+    if method == "instagram_login":
+        return True
+    if method == "facebook_login":
+        return False
     return "graph.instagram.com" in getattr(graph, "base", "")
 
 
-def _messaging_permission_hint(graph) -> str:
-    if _uses_instagram_login(graph):
+def _messaging_permission_hint(channel, graph) -> str:
+    if _uses_instagram_login(channel, graph):
         return "صلاحيات Instagram Login المطلوبة: instagram_business_basic وinstagram_business_manage_messages."
     return ("صلاحيات Facebook Login المطلوبة: instagram_basic وinstagram_manage_messages "
             "وpages_manage_metadata، مع Page Access Token وصلاحية MESSAGING على الصفحة.")
 
 
-def _comment_permission_hint(graph) -> str:
-    if _uses_instagram_login(graph):
+def _comment_permission_hint(channel, graph) -> str:
+    if _uses_instagram_login(channel, graph):
         return "تحقق من صلاحية instagram_business_manage_comments."
     return "تحقق من صلاحية instagram_manage_comments."
 
 
 def _connected_ig_channels(conn):
-    return conn.execute("""SELECT id, account_name, remote_account_id, linked_page_id, access_token
+    return conn.execute("""SELECT id, account_name, remote_account_id, linked_page_id, access_token,
+               instagram_auth_method
         FROM channels WHERE platform='instagram' AND is_active=1
         AND remote_account_id IS NOT NULL AND TRIM(remote_account_id)<>''
         AND access_token IS NOT NULL AND TRIM(access_token)<>'' ORDER BY id""").fetchall()
@@ -225,13 +233,16 @@ def _comment_rule_detail(conn, client, token, chat_id, rule_id):
 
 
 def _comment_live_list(conn, client, graph_client_for, token, chat_id, rule_id):
-    row = conn.execute("SELECT r.media_id,c.remote_account_id,c.access_token FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id WHERE r.id=? AND c.platform='instagram' AND c.is_active=1 AND c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL", (rule_id,)).fetchone()
+    row = conn.execute("SELECT r.media_id,c.id,c.remote_account_id,c.linked_page_id,c.access_token,c.instagram_auth_method
+        FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id
+        WHERE r.id=? AND c.platform='instagram' AND c.is_active=1
+          AND c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL", (rule_id,)).fetchone()
     if row is None or graph_client_for is None:
         _send(client, token, chat_id, "القاعدة غير متاحة أو عميل Meta غير جاهز.", _menu())
         return
     graph = None
     try:
-        graph = graph_client_for("instagram")
+        graph = graph_client_for(row)
         comments, _ = graph.get_media_comments(str(row["media_id"]), row["access_token"], limit=25)
         lines = [f"💬 أحدث التعليقات للقاعدة #{rule_id}:"]
         for item in comments[:12]:
@@ -242,7 +253,7 @@ def _comment_live_list(conn, client, graph_client_for, token, chat_id, rule_id):
         _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[[{"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{rule_id}"}]]})
     except Exception as exc:
         from .redact import redact
-        hint = _comment_permission_hint(graph) if graph is not None else "تعذر تهيئة عميل Meta."
+        hint = _comment_permission_hint(row, graph) if graph is not None else "تعذر تهيئة عميل Meta."
         _send(client, token, chat_id, f"تعذر جلب التعليقات من Meta: {redact(str(exc))[:400]}\n{hint}", _menu())
 
 def _dm_list(conn, client, graph_client_for, token, chat_id):
@@ -260,8 +271,8 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
     for channel in channels:
         graph = None
         try:
-            graph = graph_client_for("instagram")
-            messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(graph) else str(channel["linked_page_id"] or "")
+            graph = graph_client_for(channel)
+            messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(channel, graph) else str(channel["linked_page_id"] or "")
             if not messaging_id:
                 lines.append(f"تعذر قراءة {channel['account_name']}: يلزم ربط صفحة Facebook لهذه القناة.")
                 continue
@@ -287,14 +298,14 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
                                   "callback_data": f"bs:dm:view:{ref_id}"}])
         except Exception as exc:
             from .redact import redact
-            hint = _messaging_permission_hint(graph) if graph is not None else "تعذر تهيئة عميل Meta."
+            hint = _messaging_permission_hint(channel, graph) if graph is not None else "تعذر تهيئة عميل Meta."
             lines.append(f"تعذر جلب الرسائل: {redact(str(exc))[:220]}\n{hint}")
     keyboard.append([{"text": "↩ القائمة", "callback_data": "bs:menu"}])
     _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard": keyboard})
 
 
 def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, conversation_id):
-    channel = conn.execute("""SELECT id,account_name,remote_account_id,linked_page_id,access_token FROM channels
+    channel = conn.execute("""SELECT id,account_name,remote_account_id,linked_page_id,access_token,instagram_auth_method FROM channels
         WHERE id=? AND platform='instagram' AND is_active=1 AND remote_account_id IS NOT NULL
         AND access_token IS NOT NULL""", (channel_id,)).fetchone()
     if channel is None or graph_client_for is None:
@@ -302,8 +313,8 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
         return
     graph = None
     try:
-        graph = graph_client_for("instagram")
-        messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(graph) else str(channel["linked_page_id"] or "")
+        graph = graph_client_for(channel)
+        messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(channel, graph) else str(channel["linked_page_id"] or "")
         if not messaging_id:
             _send(client, token, chat_id, "يلزم ربط صفحة Facebook للقناة قبل قراءة الرسائل عبر Facebook Login.", _menu())
             return
@@ -333,7 +344,7 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
         ]})
     except Exception as exc:
         from .redact import redact
-        hint = _messaging_permission_hint(graph) if graph is not None else "تعذر تهيئة عميل Meta."
+        hint = _messaging_permission_hint(channel, graph) if graph is not None else "تعذر تهيئة عميل Meta."
         _send(client, token, chat_id, f"تعذر فتح المحادثة: {redact(str(exc))[:350]}\n{hint} قد تحتاج أيضاً مراجعة التطبيق لدى Meta.", _menu())
 
 
@@ -801,12 +812,12 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 _send(client, token, chat_id, "انتهت صلاحية المعاينة أو سبق تأكيدها/إلغاؤها؛ افتح المحادثة وأنشئ معاينة جديدة.", _menu())
                 return True
             try:
-                channel = conn.execute("""SELECT remote_account_id,linked_page_id,access_token FROM channels
+                channel = conn.execute("""SELECT id,remote_account_id,linked_page_id,access_token,instagram_auth_method FROM channels
                     WHERE id=? AND platform='instagram' AND is_active=1""", (row["channel_id"],)).fetchone()
                 if channel is None or graph_client_for is None:
                     raise RuntimeError("قناة Instagram غير متصلة أو عميل Meta غير متاح.")
-                graph = graph_client_for("instagram")
-                messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(graph) else str(channel["linked_page_id"] or "")
+                graph = graph_client_for(channel)
+                messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(channel, graph) else str(channel["linked_page_id"] or "")
                 if not messaging_id:
                     raise RuntimeError("يلزم ربط صفحة Facebook لإرسال الرسائل عبر Facebook Login.")
                 result = graph.send_instagram_direct_message(
