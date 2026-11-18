@@ -151,6 +151,27 @@ export function tiktokCredentials(): { clientKey: string; clientSecret: string }
   };
 }
 
+/**
+ * Instagram Business Login credentials. The Instagram product uses the app id from
+ * Meta App Settings and its Instagram-specific secret (INSTAGRAM_APP_SECRET); the
+ * latter is intentionally distinct from META_APP_SECRET when configured.
+ *
+ * Read live for the same reason as TikTok: the OAuth flow must use current credentials
+ * from the server environment/root .env, never values supplied by the browser.
+ */
+export function instagramCredentials(): { clientId: string; clientSecret: string } {
+  const env = liveEnv();
+  return {
+    clientId: process.env.META_APP_ID ?? env.META_APP_ID ?? "",
+    clientSecret:
+      process.env.INSTAGRAM_APP_SECRET ??
+      env.INSTAGRAM_APP_SECRET ??
+      process.env.META_APP_SECRET ??
+      env.META_APP_SECRET ??
+      "",
+  };
+}
+
 // Same semantics as worker/config.py's _as_bool: an explicit allow-list ("1", "true",
 // "yes", "on", case-insensitive) turns the switch on; anything else present (including
 // "0", "false", "off", "no", blank, or garbage like "2") turns it off. Only a genuinely
