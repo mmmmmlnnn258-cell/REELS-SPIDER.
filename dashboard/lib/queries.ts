@@ -79,6 +79,8 @@ export interface CreateChannelInput {
   timezone: string;
   remote_account_id?: string;
   linked_page_id?: string;
+  /** Instagram only: legacy keeps META_GRAPH_BASE behavior for pre-migration/manual channels. */
+  instagram_auth_method?: "legacy" | "facebook_login" | "instagram_login";
   access_token?: string;
   /** TikTok only: its access token expires in 24h and is refreshed by the worker, so the
    *  expiry and the refresh pair are stored at connect time rather than left null. */
@@ -94,10 +96,10 @@ export function createChannel(input: CreateChannelInput): number {
     .prepare(
       `INSERT INTO channels
         (platform, account_name, business_label, timezone, remote_account_id,
-         linked_page_id, access_token, token_expires_at, refresh_token,
+         linked_page_id, instagram_auth_method, access_token, token_expires_at, refresh_token,
          refresh_token_expires_at, requires_approval, color_hue)
        VALUES (@platform, @account_name, @business_label, @timezone, @remote_account_id,
-         @linked_page_id, @access_token, @token_expires_at, @refresh_token,
+         @linked_page_id, @instagram_auth_method, @access_token, @token_expires_at, @refresh_token,
          @refresh_token_expires_at, @requires_approval, @color_hue)`
     )
     .run({
@@ -107,6 +109,7 @@ export function createChannel(input: CreateChannelInput): number {
       timezone: input.timezone,
       remote_account_id: input.remote_account_id || null,
       linked_page_id: input.linked_page_id || null,
+      instagram_auth_method: input.platform === "instagram" ? (input.instagram_auth_method ?? "legacy") : "legacy",
       access_token: input.access_token || null,
       token_expires_at: input.token_expires_at ?? null,
       refresh_token: input.refresh_token ?? null,
@@ -210,6 +213,7 @@ export function updateChannel(
     // routing it through here would silently skip that. Enforced by the type.
     remote_account_id: string | null;
     linked_page_id: string | null;
+    instagram_auth_method: "legacy" | "facebook_login" | "instagram_login";
     access_token: string | null;
     // OAuth-managed credentials. Needed so RECONNECTING a channel refreshes it in place
     // instead of creating a duplicate — see upsertOAuthChannel below.
