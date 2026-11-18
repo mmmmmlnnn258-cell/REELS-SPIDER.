@@ -295,7 +295,7 @@ def run_forever(config: Config, client, logger, *, client_for=None) -> None:
     from .telegram_ingest import run_forever as run_telegram_receiver
     telegram_thread = threading.Thread(
         target=run_telegram_receiver,
-        args=(config, logger, telegram_stop),
+        args=(config, logger, telegram_stop, client_for),
         name="telegram-video-receiver",
         daemon=True,
     )
