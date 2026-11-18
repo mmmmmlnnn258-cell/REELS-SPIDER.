@@ -5,7 +5,36 @@ from dataclasses import replace
 from worker.telegram_ingest import process_update
 
 
-VIDEO_BYTES = b"\x00\x00\x00\x18ftypisom" + b"fake-mp4-payload"
+def mp4_box(kind: bytes, payload: bytes) -> bytes:
+    return (len(payload) + 8).to_bytes(4, "big") + kind + payload
+
+
+def make_mp4() -> bytes:
+    ftyp = mp4_box(b"ftyp", b"isom" + b"\x00\x00\x02\x00" + b"isom")
+    mvhd = (
+        b"\x00\x00\x00\x00" + b"\x00" * 8
+        + (1000).to_bytes(4, "big") + (12000).to_bytes(4, "big")
+        + b"\x00" * 80
+    )
+    mvhd_box = mp4_box(b"mvhd", mvhd)
+    matrix = (
+        (65536).to_bytes(4, "big", signed=True) + b"\x00" * 12
+        + (65536).to_bytes(4, "big", signed=True) + b"\x00" * 12
+        + (0x40000000).to_bytes(4, "big")
+    )
+    tkhd = (
+        b"\x00\x00\x00\x07" + b"\x00" * 8
+        + (1).to_bytes(4, "big") + b"\x00" * 4 + (12000).to_bytes(4, "big")
+        + b"\x00" * 8 + b"\x00" * 8 + matrix
+        + (720 * 65536).to_bytes(4, "big") + (1280 * 65536).to_bytes(4, "big")
+    )
+    hdlr = b"\x00" * 8 + b"vide" + b"\x00" * 12 + b"Video\x00"
+    trak = mp4_box(b"trak", mp4_box(b"tkhd", tkhd) + mp4_box(b"mdia", mp4_box(b"hdlr", hdlr)))
+    moov = mp4_box(b"moov", mvhd_box + trak)
+    return ftyp + moov + mp4_box(b"mdat", b"video-payload")
+
+
+VIDEO_BYTES = make_mp4()
 
 
 class FakeTelegram:
