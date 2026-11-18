@@ -186,7 +186,7 @@ def test_dm_cancel_marks_preview_final_and_old_confirm_cannot_send(conn, config)
 
 def test_menu_command_cancels_pending_dm_previews(conn, config):
     channel = connected_channel(conn)
-    now = "2026-11-18T12:00:00+00:00"
+    now = datetime.now(timezone.utc).isoformat()
     outbox = conn.execute(
         """INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,
              message_text,status,created_at,updated_at)
@@ -215,7 +215,7 @@ def test_facebook_login_dm_uses_linked_page_id_for_send(conn, config):
 
 def test_dm_meta_failure_is_marked_unknown_and_not_retried(conn, config):
     channel = connected_channel(conn)
-    now = "2026-11-18T12:00:00+00:00"
+    now = datetime.now(timezone.utc).isoformat()
     outbox = conn.execute(
         """INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,
              message_text,status,created_at,updated_at)
