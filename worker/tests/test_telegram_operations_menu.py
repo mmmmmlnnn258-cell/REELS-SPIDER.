@@ -45,9 +45,9 @@ def test_operation_log_shows_recent_success_and_failure(conn, config):
            (event_key,event_type,status,publication_id,channel_name,caption,detail,created_at)
            VALUES(?,?,?,?,?,?,?,?)""",
         [
-            ("success-1", "نشر", "success", 11, "قناة الاختبار", "وصف ناجح",
+            ("success-1", "نشر", "success", None, "قناة الاختبار", "وصف ناجح",
              "تم تأكيد النشر من المنصة", "2026-11-18T12:00:00+00:00"),
-            ("failure-1", "نشر", "failed", 12, "قناة الاختبار", "وصف فاشل",
+            ("failure-1", "نشر", "failed", None, "قناة الاختبار", "وصف فاشل",
              "رفضت المنصة الطلب", "2026-11-18T13:00:00+00:00"),
         ],
     )
@@ -67,7 +67,7 @@ def test_operation_log_pagination_is_bounded(conn, config):
             """INSERT INTO telegram_operation_log
                (event_key,event_type,status,publication_id,detail,created_at)
                VALUES(?,?,?,?,?,?)""",
-            (f"event-{i}", "نشر", "info", i, f"تفصيل {i}",
+            (f"event-{i}", "نشر", "info", None, f"تفصيل {i}",
              f"2026-11-18T{i:02d}:00:00+00:00"),
         )
     conn.commit()
