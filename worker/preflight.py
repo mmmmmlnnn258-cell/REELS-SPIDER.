@@ -14,8 +14,7 @@ proof of reachability:
     against another platform's endpoint.
 
 Uses ClientRegistry so each channel is checked against the correct Graph host for its
-platform (Facebook is always graph.facebook.com; Instagram uses the install's
-META_GRAPH_BASE).
+platform (Facebook is always graph.facebook.com; Instagram uses each channel's login method, with META_GRAPH_BASE retained only for legacy rows).
 
     python3 -m worker.preflight              # check every active channel
     python3 -m worker.preflight --channel 1  # check just channel #1
@@ -146,7 +145,7 @@ def check_channels(rows, registry: ClientRegistry, *, print_fn=print) -> bool:
             all_ok = False
             continue
         try:
-            check(registry.for_platform(ch["platform"]), ch, name, print_fn)
+            check(registry.for_platform(ch), ch, name, print_fn)
         except GraphAPIError as exc:
             print_fn(f"  ✗ {name}: {redact(str(exc))}")
             all_ok = False
