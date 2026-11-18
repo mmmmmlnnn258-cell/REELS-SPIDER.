@@ -176,3 +176,33 @@ def test_inbox_delivery_is_not_mislabeled_as_published(conn, config, make_public
     assert event["event_type"] == "تسليم لصندوق النشر"
     assert "لم يتم تأكيد نشره" in event["detail"]
     assert "لم يتم نشره على الحساب بعد" in telegram.messages[0][2]
+
+
+def test_failed_telegram_alert_is_retried_on_later_worker_cycle(conn, config, make_publication, monkeypatch):
+    pub = make_publication(post_type="single", n_assets=1)
+    conn.execute(
+        "UPDATE publications SET status='posted',remote_post_id='ig-media-3' WHERE id=?",
+        (pub["id"],),
+    )
+    conn.commit()
+    class BrokenTelegram:
+        def send_message(self, *args, **kwargs):
+            raise RuntimeError("temporary Telegram outage")
+    monkeypatch.setattr(operation_log, "_telegram_client", lambda: BrokenTelegram())
+    cfg = replace(config, telegram_bot_token="test-token",
+                  telegram_allowed_chat_ids="7441755677")
+    operation_log.record_publication_outcome(
+        conn, pub["id"], SimpleNamespace(result="posted", detail="ok"),
+        cfg, dry_run=False
+    )
+    assert conn.execute(
+        "SELECT notified_at FROM telegram_operation_log"
+    ).fetchone()[0] is None
+
+    telegram = FakeTelegram()
+    monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
+    assert operation_log.retry_pending_notifications(conn, cfg) == 1
+    assert len(telegram.messages) == 1
+    assert conn.execute(
+        "SELECT notified_at FROM telegram_operation_log"
+    ).fetchone()[0]
