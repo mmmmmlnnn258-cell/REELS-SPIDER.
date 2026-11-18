@@ -169,7 +169,7 @@ def record_publication_outcome(conn, publication_id: int, outcome, config, *,
     else:
         status = "info"
         detail = outcome.detail
-    event_key = f"publication:{publication_id}:{outcome.result}:{row['attempt_count']}"
+    event_key = f"publication:{publication_id}:{outcome.result}:{row['attempt_count']}:{'dry-run' if dry_run else 'live'}"
     event_type = "تسليم لصندوق النشر" if outcome.result == "posted" and row["delivery_state"] == "inbox" else "نشر"
     event = _insert_event(
         conn, event_key=event_key, event_type=event_type, status=status,
