@@ -81,7 +81,7 @@ def run_comment_automation(conn, config, now=None, logger=None, client_for=None)
     now = now or datetime.now(timezone.utc)
     now_iso = now.isoformat()
     rows = conn.execute(
-        """SELECT r.*, c.access_token, c.remote_account_id, c.platform, c.account_name
+        """SELECT r.*, c.access_token, c.remote_account_id, c.platform, c.account_name, c.instagram_auth_method
            FROM instagram_comment_rules r
            JOIN channels c ON c.id = r.channel_id
            WHERE r.enabled = 1 AND c.is_active = 1 AND c.platform = 'instagram'
@@ -101,7 +101,7 @@ def run_comment_automation(conn, config, now=None, logger=None, client_for=None)
             except (TypeError, ValueError):
                 pass
         try:
-            client = client_for("instagram") if client_for else None
+            client = client_for(rule) if client_for else None
             if client is None:
                 continue
             token, account_id, media_id = (
