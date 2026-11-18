@@ -70,28 +70,50 @@ def _schedule_rows(conn):
     ).fetchall()
 
 
-def _schedule_list(conn, client, token: str, chat_id: str):
-    rows = _schedule_rows(conn)
+def _schedule_list(conn, client, token: str, chat_id: str, page: int = 0):
+    total = conn.execute(
+        "SELECT COUNT(*) FROM publications WHERE status IN ('scheduled', 'pending_approval')"
+    ).fetchone()[0]
+    page_size = 8
+    page_count = max(1, (total + page_size - 1) // page_size)
+    page = max(0, min(page, page_count - 1))
+    rows = conn.execute(
+        """SELECT pub.id, pub.status, pub.scheduled_at, pub.is_held,
+                  p.caption, p.post_type, c.account_name, c.timezone
+             FROM publications pub
+             JOIN posts p ON p.id = pub.post_id
+             JOIN channels c ON c.id = pub.channel_id
+            WHERE pub.status IN ('scheduled', 'pending_approval')
+            ORDER BY pub.scheduled_at ASC, pub.id ASC LIMIT ? OFFSET ?""",
+        (page_size, page * page_size),
+    ).fetchall()
     if not rows:
         _send(client, token, chat_id, "📅 لا توجد منشورات مجدولة حالياً.", {
             "inline_keyboard": [[{"text": "↩ القائمة", "callback_data": "bs:menu"}]]
         })
         return
-    lines = ["📅 المنشورات المجدولة الحالية:"]
+    lines = [f"📅 المنشورات المجدولة الحالية (صفحة {page + 1}/{page_count}):"]
     keyboard = []
     for row in rows:
-        caption = (row["caption"] or "بدون وصف").replace("\\n", " ")[:48]
+        caption = (row["caption"] or "بدون وصف").replace("\\\\n", " ")[:48]
         local_time = _local_stamp(row["scheduled_at"], row["timezone"])
         state = "موقوف مؤقتاً" if row["is_held"] else (
             "بانتظار الموافقة" if row["status"] == "pending_approval" else "مجدول"
         )
-        lines.append(f"#{row['id']} · {local_time} ({row['timezone']}) · {state}\n{caption}")
-        keyboard.append([{"text": f"تفاصيل المنشور #{row['id']}", "callback_data": f"bs:schedule:view:{row['id']}"}])
+        lines.append(f"#{row['id']} · {local_time} ({row['timezone']}) · {state}\\n{caption}")
+        keyboard.append([{"text": f"تفاصيل المنشور #{row['id']}",
+                          "callback_data": f"bs:schedule:view:{row['id']}:{page}"}])
+    navigation = []
+    if page > 0:
+        navigation.append({"text": "⬅ السابقة", "callback_data": f"bs:schedule:page:{page - 1}"})
+    if page + 1 < page_count:
+        navigation.append({"text": "التالية ➡", "callback_data": f"bs:schedule:page:{page + 1}"})
+    if navigation:
+        keyboard.append(navigation)
     keyboard.append([{"text": "↩ القائمة", "callback_data": "bs:menu"}])
-    _send(client, token, chat_id, "\n".join(lines), {"inline_keyboard": keyboard})
+    _send(client, token, chat_id, "\\n".join(lines), {"inline_keyboard": keyboard})
 
-
-def _schedule_detail(conn, client, token: str, chat_id: str, publication_id: int):
+def _schedule_detail(conn, client, token: str, chat_id: str, publication_id: int, page: int = 0):
     row = conn.execute(
         """SELECT pub.id, pub.status, pub.scheduled_at, pub.is_held, pub.post_id,
                   p.caption, p.post_type, c.account_name, c.timezone
@@ -130,7 +152,7 @@ def _schedule_detail(conn, client, token: str, chat_id: str, publication_id: int
     keyboard = {"inline_keyboard": [
         [{"text": "🕒 تأجيل الموعد", "callback_data": f"bs:schedule:reschedule:{publication_id}"}],
         [{"text": "📝 إلغاء الجدولة وتحويل لمسودة", "callback_data": f"bs:schedule:cancel:{publication_id}"}],
-        [{"text": "↩ قائمة الجدولة", "callback_data": "bs:schedule"}],
+        [{"text": "↩ قائمة الجدولة", "callback_data": f"bs:schedule:page:{page}"}],
     ]}
     _send(client, token, chat_id, body, keyboard)
 
@@ -202,12 +224,23 @@ def process_control_update(conn, config, client, update: dict) -> bool:
         if data == "bs:schedule":
             _schedule_list(conn, client, token, chat_id)
             return True
+        if data.startswith("bs:schedule:page:"):
+            raw_page = data.removeprefix("bs:schedule:page:")
+            if not raw_page.isdigit() or len(raw_page) > 5:
+                _send(client, token, chat_id, "رقم صفحة غير صالح.", _menu())
+                return True
+            _schedule_list(conn, client, token, chat_id, int(raw_page))
+            return True
         if data.startswith("bs:schedule:view:"):
-            raw_id = data.removeprefix("bs:schedule:view:")
-            if not raw_id.isdigit() or len(raw_id) > 9:
+            parts = data.removeprefix("bs:schedule:view:").split(":")
+            if len(parts) not in {1, 2} or not parts[0].isdigit() or len(parts[0]) > 9:
                 _send(client, token, chat_id, "رقم منشور غير صالح.", _menu())
                 return True
-            _schedule_detail(conn, client, token, chat_id, int(raw_id))
+            if len(parts) == 2 and (not parts[1].isdigit() or len(parts[1]) > 5):
+                _send(client, token, chat_id, "رقم صفحة غير صالح.", _menu())
+                return True
+            page = int(parts[1]) if len(parts) == 2 else 0
+            _schedule_detail(conn, client, token, chat_id, int(parts[0]), page)
             return True
         if data.startswith("bs:schedule:reschedule:"):
             raw_id = data.removeprefix("bs:schedule:reschedule:")
