@@ -26,7 +26,7 @@ def _insert_event(conn, *, event_key: str, event_type: str, status: str,
            (event_key,event_type,status,publication_id,channel_name,caption,detail,created_at)
            VALUES(?,?,?,?,?,?,?,?)""",
         (event_key, event_type, status, publication_id, channel_name,
-         (caption or "")[:500], redact(str(detail or ""))[:1200], stamp),
+         redact(str(caption or ""))[:500], redact(str(detail or ""))[:1200], stamp),
     )
     conn.commit()
     return conn.execute(
