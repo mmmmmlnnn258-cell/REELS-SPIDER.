@@ -50,7 +50,6 @@ export function ChannelForm({
     timezone: defaultTimezone,
     remote_account_id: "",
     linked_page_id: "",
-    instagram_auth_method: "legacy" as "legacy" | "facebook_login" | "instagram_login",
     access_token: "",
     requires_approval: false,
     color_hue: null as number | null,
@@ -139,25 +138,6 @@ export function ChannelForm({
             ))}
           </select>
         </div>
-        {form.platform === "instagram" ? (
-          <div>
-            <label className={label}>Instagram login method</label>
-            <select
-              className={field}
-              value={form.instagram_auth_method}
-              onChange={(e) =>
-                set("instagram_auth_method", e.target.value as typeof form.instagram_auth_method)
-              }
-            >
-              <option value="legacy">Legacy — follow META_GRAPH_BASE</option>
-              <option value="facebook_login">Facebook Login — Page token</option>
-              <option value="instagram_login">Instagram Login — connect with Instagram</option>
-            </select>
-            <p className="mt-1 text-[11px] text-muted">
-              Instagram Login uses its own OAuth button after you save this channel. Existing legacy channels keep their current routing.
-            </p>
-          </div>
-        ) : null}
         <div>
           <label className={label}>Account name</label>
           <input
