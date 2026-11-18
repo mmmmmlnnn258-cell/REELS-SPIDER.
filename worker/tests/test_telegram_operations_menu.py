@@ -83,3 +83,31 @@ def test_invalid_operation_log_page_is_rejected(conn, config):
     client = FakeTelegram()
     process_control_update(conn, cfg(config), client, cb(5, "bs:operations:page:-1"))
     assert "رقم صفحة غير صالح" in client.messages[-1][1]
+
+
+def test_successful_pause_action_is_added_to_operation_history(conn, config):
+    client = FakeTelegram()
+    process_control_update(conn, cfg(config), client, cb(10, "bs:publishing:pause"))
+    event = conn.execute(
+        "SELECT event_type,status,detail FROM telegram_operation_log"
+    ).fetchone()
+    assert event["event_type"] == "إيقاف النشر"
+    assert event["status"] == "info"
+    assert "التحكم العام" in event["detail"]
+
+
+def test_publish_now_action_is_logged_as_queue_change_not_publish_success(
+    conn, config, make_publication
+):
+    pub = make_publication(post_type="single", n_assets=1)
+    client = FakeTelegram()
+    process_control_update(conn, cfg(config), client, cb(11, f"bs:publish:{pub['id']}"))
+    event = conn.execute(
+        "SELECT event_type,status,detail FROM telegram_operation_log"
+    ).fetchone()
+    assert event["event_type"] == "تقديم موعد للنشر"
+    assert event["status"] == "info"
+    assert "لا يعني أن Instagram أكد النشر" in event["detail"]
+    assert conn.execute(
+        "SELECT status FROM publications WHERE id=?", (pub["id"],)
+    ).fetchone()[0] == "scheduled"
