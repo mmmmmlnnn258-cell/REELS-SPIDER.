@@ -75,12 +75,6 @@ def _rows(conn, channel_id):
 
 # -- timestamp normalisation ---------------------------------------------------------
 
-@pytest.mark.parametrize("raw,expected_prefix", [
-    ("2026-08-06T01:00:24+0000", "2026-08-06T01:00:24+00:00"),
-    ("2026-08-06T01:00:24+00:00", "2026-08-06T01:00:24+00:00"),
-])
-
-
 def test_instagram_login_media_sync_uses_only_supported_fields():
     client = FakeMediaClient([[]])
     client.base = "https://graph.instagram.com/v27.0"
@@ -99,6 +93,12 @@ def test_instagram_login_media_sync_uses_only_supported_fields():
     assert client.requested_fields == [client.INSTAGRAM_LOGIN_MEDIA_FIELDS]
     assert "caption" not in client.requested_fields[0]
     assert "media_product_type" not in client.requested_fields[0]
+
+@pytest.mark.parametrize("raw,expected_prefix", [
+    ("2026-08-06T01:00:24+0000", "2026-08-06T01:00:24+00:00"),
+    ("2026-08-06T01:00:24+00:00", "2026-08-06T01:00:24+00:00"),
+])
+
 
 def test_meta_timestamps_normalise_to_colon_offsets(raw, expected_prefix):
     """Windows are filtered by STRING comparison in SQL, so a mixed offset format would
