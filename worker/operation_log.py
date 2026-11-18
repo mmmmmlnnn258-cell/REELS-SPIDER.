@@ -306,3 +306,25 @@ def record_terminal_publication_failure(conn, publication_id: int, config, detai
     )
     _notify_once(conn, event, config, logger=logger)
     return event
+
+
+def record_control_operation(conn, update_id: int, event_type: str, detail: str, *,
+                             publication_id: int | None = None,
+                             channel_name: str | None = None,
+                             caption: str | None = None, now=None):
+    """Add a successful Telegram control action to the history without generating an alert."""
+    if publication_id is not None:
+        row = conn.execute(
+            """SELECT p.caption,c.account_name FROM publications pub
+                 JOIN posts p ON p.id=pub.post_id JOIN channels c ON c.id=pub.channel_id
+                WHERE pub.id=?""", (publication_id,)
+        ).fetchone()
+        if row:
+            caption = row["caption"]
+            channel_name = row["account_name"]
+    return _insert_event(
+        conn, event_key=f"telegram-control:{int(update_id)}",
+        event_type=event_type, status="info", publication_id=publication_id,
+        channel_name=channel_name, caption=caption, detail=detail,
+        created_at=(now or datetime.now(timezone.utc)).isoformat(),
+    )
