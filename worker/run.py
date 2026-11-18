@@ -205,6 +205,10 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
                         last_error=error, next_retry_at=None,
                         updated_at=now.isoformat(),
                     )
+                    from .operation_log import record_terminal_publication_failure
+                    record_terminal_publication_failure(
+                        conn, int(pub["id"]), config, error, logger=logger, now=now,
+                    )
                     processed += 1
                     continue
                 # No adapter for this platform at all. Hand it to publish_one anyway: it
