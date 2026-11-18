@@ -255,6 +255,8 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
         return
     lines = ["✉️ محادثات Instagram الخاصة:"]
     keyboard = []
+    with conn:
+        conn.execute("DELETE FROM telegram_dm_conversation_refs WHERE chat_id=?", (chat_id,))
     for channel in channels:
         graph = None
         try:
@@ -267,14 +269,21 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
             lines.append(f"\n{channel['account_name']}: {len(rows)} محادثة")
             for conv in rows[:8]:
                 cid = str(conv.get("id") or "")
-                if not cid.isdigit():
+                if not cid or len(cid) > 512:
                     continue
                 people = (conv.get("participants") or {}).get("data") or []
                 peer = next((p for p in people if str(p.get("id") or "") != str(channel["remote_account_id"])), {})
                 username = peer.get("username") or "مستخدم"
+                with conn:
+                    ref = conn.execute(
+                        """INSERT INTO telegram_dm_conversation_refs
+                           (chat_id,channel_id,conversation_id,created_at) VALUES(?,?,?,?)""",
+                        (chat_id, int(channel["id"]), cid, datetime.now(timezone.utc).isoformat()),
+                    )
+                    ref_id = int(ref.lastrowid)
                 lines.append(f"• {username} · {conv.get('updated_time') or ''}")
                 keyboard.append([{"text": f"فتح {username[:18]} / قناة {channel['id']}",
-                                  "callback_data": f"bs:dm:view:{channel['id']}:{cid}"}])
+                                  "callback_data": f"bs:dm:view:{ref_id}"}])
         except Exception as exc:
             from .redact import redact
             hint = _messaging_permission_hint(graph) if graph is not None else "تعذر تهيئة عميل Meta."
@@ -360,6 +369,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 conn.execute("DELETE FROM telegram_schedule_sessions WHERE chat_id=?", (chat_id,))
                 conn.execute("DELETE FROM telegram_comment_edit_sessions WHERE chat_id=?", (chat_id,))
                 conn.execute("DELETE FROM telegram_dm_reply_sessions WHERE chat_id=?", (chat_id,))
+                conn.execute("DELETE FROM telegram_dm_conversation_refs WHERE chat_id=?", (chat_id,))
                 conn.execute("UPDATE telegram_dm_outbox SET status='cancelled',updated_at=? WHERE chat_id=? AND status='pending'", (datetime.now(timezone.utc).isoformat(), chat_id))
                 conn.execute(
                     """INSERT OR IGNORE INTO telegram_ingest_updates
@@ -688,10 +698,26 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             return True
         if data.startswith("bs:dm:view:"):
             parts = data.split(":")
-            if len(parts) != 5 or not parts[3].isdigit() or not parts[4].isdigit():
-                _send(client, token, chat_id, "طلب فتح محادثة غير صالح.", _menu())
-            else:
+            if len(parts) == 4 and parts[3].isdigit() and len(parts[3]) <= 9:
+                ref = conn.execute(
+                    """SELECT id,channel_id,conversation_id,created_at
+                         FROM telegram_dm_conversation_refs
+                        WHERE id=? AND chat_id=?""",
+                    (int(parts[3]), chat_id),
+                ).fetchone()
+                if ref is None or _session_expired(ref["created_at"]):
+                    with conn:
+                        conn.execute("DELETE FROM telegram_dm_conversation_refs WHERE chat_id=?", (chat_id,))
+                    _send(client, token, chat_id, "انتهت صلاحية قائمة المحادثات. افتح صندوق الرسائل مجدداً.", _menu())
+                else:
+                    _dm_view(conn, client, graph_client_for, token, chat_id,
+                             int(ref["channel_id"]), str(ref["conversation_id"]))
+            elif len(parts) == 5 and parts[3].isdigit() and parts[4].isdigit():
+                # Backward compatibility for numeric callback buttons created before this
+                # release; new lists use short chat-bound references for opaque Meta IDs.
                 _dm_view(conn, client, graph_client_for, token, chat_id, int(parts[3]), parts[4])
+            else:
+                _send(client, token, chat_id, "طلب فتح محادثة غير صالح.", _menu())
             return True
         if data == "bs:dm:compose":
             session = conn.execute("SELECT created_at FROM telegram_dm_reply_sessions WHERE chat_id=?", (chat_id,)).fetchone()
