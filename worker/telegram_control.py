@@ -133,7 +133,7 @@ def process_control_update(conn, config, client, update: dict) -> bool:
                           "لم يتم تقديم المنشور: لم يعد مجدولاً أو أن قناة Instagram غير متصلة.", _menu())
                     return True
                 conn.execute(
-                    "UPDATE publications SET scheduled_at=?, updated_at=? WHERE id=? AND status='scheduled' AND is_held=0",
+                    "UPDATE publications SET scheduled_at=?, next_retry_at=NULL, updated_at=? WHERE id=? AND status='scheduled' AND is_held=0",
                     (now, now, publication_id),
                 )
                 if update_id is not None:
