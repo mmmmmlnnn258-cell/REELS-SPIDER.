@@ -95,12 +95,12 @@ def _schedule_list(conn, client, token: str, chat_id: str, page: int = 0):
     lines = [f"📅 المنشورات المجدولة الحالية (صفحة {page + 1}/{page_count}):"]
     keyboard = []
     for row in rows:
-        caption = (row["caption"] or "بدون وصف").replace("\\\\n", " ")[:48]
+        caption = (row["caption"] or "بدون وصف").replace("\\n", " ")[:48]
         local_time = _local_stamp(row["scheduled_at"], row["timezone"])
         state = "موقوف مؤقتاً" if row["is_held"] else (
             "بانتظار الموافقة" if row["status"] == "pending_approval" else "مجدول"
         )
-        lines.append(f"#{row['id']} · {local_time} ({row['timezone']}) · {state}\\n{caption}")
+        lines.append(f"#{row['id']} · {local_time} ({row['timezone']}) · {state}\n{caption}")
         keyboard.append([{"text": f"تفاصيل المنشور #{row['id']}",
                           "callback_data": f"bs:schedule:view:{row['id']}:{page}"}])
     navigation = []
@@ -111,7 +111,7 @@ def _schedule_list(conn, client, token: str, chat_id: str, page: int = 0):
     if navigation:
         keyboard.append(navigation)
     keyboard.append([{"text": "↩ القائمة", "callback_data": "bs:menu"}])
-    _send(client, token, chat_id, "\\n".join(lines), {"inline_keyboard": keyboard})
+    _send(client, token, chat_id, "\n".join(lines), {"inline_keyboard": keyboard})
 
 def _schedule_detail(conn, client, token: str, chat_id: str, publication_id: int, page: int = 0):
     row = conn.execute(
