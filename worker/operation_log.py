@@ -321,6 +321,7 @@ def record_terminal_publication_failure(conn, publication_id: int, config, detai
 
 def record_control_operation(conn, update_id: int, event_type: str, detail: str, *,
                              publication_id: int | None = None,
+                             rule_id: int | None = None,
                              channel_name: str | None = None,
                              caption: str | None = None, now=None):
     """Add a successful Telegram control action to the history without generating an alert."""
@@ -332,6 +333,15 @@ def record_control_operation(conn, update_id: int, event_type: str, detail: str,
         ).fetchone()
         if row:
             caption = row["caption"]
+            channel_name = row["account_name"]
+    elif rule_id is not None:
+        row = conn.execute(
+            """SELECT r.media_id,c.account_name FROM instagram_comment_rules r
+                 JOIN channels c ON c.id=r.channel_id WHERE r.id=?""",
+            (rule_id,),
+        ).fetchone()
+        if row:
+            caption = caption or f"Media {row['media_id']}"
             channel_name = row["account_name"]
     return _insert_event(
         conn, event_key=f"telegram-control:{int(update_id)}",
