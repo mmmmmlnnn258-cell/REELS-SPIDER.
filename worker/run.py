@@ -199,16 +199,25 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
                     )
                     if logger:
                         logger.error("[pub %s] %s", pub["id"], error)
-                    db.update_publication(
-                        conn, pub["id"],
-                        status="failed", attempt_count=pub["attempt_count"] + 1,
-                        last_error=error, next_retry_at=None,
-                        updated_at=now.isoformat(),
-                    )
-                    from .operation_log import record_terminal_publication_failure
-                    record_terminal_publication_failure(
-                        conn, int(pub["id"]), config, error, logger=logger, now=now,
-                    )
+                    if dry_run:
+                        from types import SimpleNamespace
+                        from .operation_log import record_publication_outcome
+                        record_publication_outcome(
+                            conn, int(pub["id"]),
+                            SimpleNamespace(result="failed", detail=error),
+                            config, dry_run=True, logger=logger, now=now,
+                        )
+                    else:
+                        db.update_publication(
+                            conn, pub["id"],
+                            status="failed", attempt_count=pub["attempt_count"] + 1,
+                            last_error=error, next_retry_at=None,
+                            updated_at=now.isoformat(),
+                        )
+                        from .operation_log import record_terminal_publication_failure
+                        record_terminal_publication_failure(
+                            conn, int(pub["id"]), config, error, logger=logger, now=now,
+                        )
                     processed += 1
                     continue
                 # No adapter for this platform at all. Hand it to publish_one anyway: it
