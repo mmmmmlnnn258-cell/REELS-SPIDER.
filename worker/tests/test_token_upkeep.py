@@ -229,6 +229,26 @@ def test_instagram_known_close_expiry_and_failed_renewal_is_flagged(conn, ig_log
     assert "Automatic renewal failed" in row["token_error"]
 
 
+
+def test_instagram_facebook_login_channel_uses_facebook_debug_host(conn, config):
+    cfg = dataclasses.replace(config, graph_base="https://graph.instagram.com",
+                              meta_app_id="app", meta_app_secret="secret")
+    cur = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, timezone, remote_account_id, access_token,
+            instagram_auth_method)
+           VALUES ('instagram','IG via Facebook Login','UTC','ig-123','PAGE_TOKEN',
+                   'facebook_login')"""
+    )
+    conn.commit()
+    channel = db.get_channel(conn, cur.lastrowid)
+    session = FakeSession({"debug_token": _debug(None)})
+
+    assert check_channel(conn, cfg, channel, NOW, session=session) == "ok"
+    assert session.calls[0][0].startswith("https://graph.facebook.com/")
+    assert "refresh_access_token" not in session.calls[0][0]
+
+
 # -- Facebook (check only) -------------------------------------------------------------
 
 def test_facebook_page_token_that_never_expires_is_ok(conn, config):
