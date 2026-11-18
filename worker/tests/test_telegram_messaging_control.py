@@ -126,6 +126,9 @@ def test_dm_reply_requires_preview_and_explicit_confirmation(conn, config):
     process_control_update(conn, cfg(config), client, cb(13, f"bs:dm:send:{row['id']}"), graph_for)
     assert graph.sent == [("ig-business", "person-77", "رد يدوي")]
     assert conn.execute("SELECT status FROM telegram_dm_outbox WHERE id=?", (row["id"],)).fetchone()[0] == "sent"
+    assert conn.execute(
+        "SELECT notified_at FROM telegram_operation_log WHERE event_type='رسالة خاصة يدوية'"
+    ).fetchone()[0]
 
 
 def test_dm_confirmation_is_idempotent_and_never_resends(conn, config):
