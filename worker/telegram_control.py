@@ -20,6 +20,7 @@ def _menu() -> dict:
         [{"text": "💬 إدارة التعليقات", "callback_data": "bs:comments"},
          {"text": "✉️ الرسائل الخاصة", "callback_data": "bs:dms"}],
         [{"text": "⏯ إيقاف / استئناف النشر", "callback_data": "bs:publishing_control"}],
+        [{"text": "📋 سجل العمليات", "callback_data": "bs:operations"}],
     ]}
 
 
@@ -418,6 +419,54 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                       [{"text": "↩ القائمة", "callback_data": "bs:menu"}],
                   ]})
             return True
+        if data == "bs:operations" or data.startswith("bs:operations:page:"):
+            page = 0
+            if data != "bs:operations":
+                raw_page = data.removeprefix("bs:operations:page:")
+                if not raw_page.isdigit() or len(raw_page) > 5:
+                    _send(client, token, chat_id, "رقم صفحة غير صالح.", _menu())
+                    return True
+                page = int(raw_page)
+            page_size = 8
+            total = conn.execute("SELECT COUNT(*) FROM telegram_operation_log").fetchone()[0]
+            page_count = max(1, (total + page_size - 1) // page_size)
+            page = min(page, page_count - 1)
+            rows = conn.execute(
+                """SELECT id,event_type,status,publication_id,channel_name,caption,detail,created_at
+                     FROM telegram_operation_log
+                    ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?""",
+                (page_size, page * page_size),
+            ).fetchall()
+            if not rows:
+                body = "📋 سجل العمليات فارغ حالياً. ستظهر هنا نتائج النشر والمحاولات والأخطاء."
+            else:
+                labels = {
+                    "success": "✅ نجاح", "retrying": "⚠️ إعادة محاولة",
+                    "failed": "❌ فشل", "dry_run": "🧪 محاكاة", "info": "ℹ️ معلومات",
+                }
+                lines = [f"📋 سجل العمليات · صفحة {page + 1}/{page_count}"]
+                for row in rows:
+                    stamp = str(row["created_at"] or "").replace("T", " ")[:19]
+                    lines.append(
+                        f"\n#{row['id']} · {labels.get(row['status'], row['status'])} · {stamp}\n"
+                        f"{row['event_type']} · منشور #{row['publication_id'] or '—'} · "
+                        f"{row['channel_name'] or 'قناة غير محددة'}\n"
+                        f"{(row['caption'] or 'بدون وصف')[:100]}\n"
+                        f"{(row['detail'] or 'لا توجد تفاصيل')[:260]}"
+                    )
+                body = "\n".join(lines)[:3900]
+            navigation = []
+            if page > 0:
+                navigation.append({"text": "⬅ الأحدث", "callback_data": f"bs:operations:page:{page - 1}"})
+            if page + 1 < page_count:
+                navigation.append({"text": "الأقدم ➡", "callback_data": f"bs:operations:page:{page + 1}"})
+            keyboard = []
+            if navigation:
+                keyboard.append(navigation)
+            keyboard.append([{"text": "↩ القائمة", "callback_data": "bs:menu"}])
+            _send(client, token, chat_id, body, {"inline_keyboard": keyboard})
+            return True
+
         if data == "bs:status":
             heartbeat = conn.execute("SELECT last_seen_at FROM worker_heartbeat WHERE id=1").fetchone()
             channels = conn.execute(
