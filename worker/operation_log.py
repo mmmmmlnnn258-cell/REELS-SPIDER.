@@ -192,7 +192,6 @@ def retry_pending_notifications(conn, config, *, logger=None, limit: int = 20):
             ORDER BY created_at ASC,id ASC LIMIT ?""",
         (max(1, min(int(limit), 100)),),
     ).fetchall()
-    delivered_before = sum(1 for row in rows if row["notified_at"])
     for row in rows:
         _notify_once(conn, row, config, logger=logger)
     delivered_after = conn.execute(
@@ -201,4 +200,4 @@ def retry_pending_notifications(conn, config, *, logger=None, limit: int = 20):
         (",".join("?" for _ in rows) or "NULL"),
         tuple(row["id"] for row in rows),
     ).fetchone()[0] if rows else 0
-    return max(0, delivered_after - delivered_before)
+    return delivered_after
