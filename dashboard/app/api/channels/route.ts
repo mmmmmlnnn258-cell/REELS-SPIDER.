@@ -48,6 +48,18 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
+  const instagram_auth_method =
+    platform === "instagram" ? body.instagram_auth_method ?? "legacy" : "legacy";
+  if (
+    instagram_auth_method !== "legacy" &&
+    instagram_auth_method !== "facebook_login" &&
+    instagram_auth_method !== "instagram_login"
+  ) {
+    return NextResponse.json(
+      { error: "instagram_auth_method must be legacy, facebook_login, or instagram_login." },
+      { status: 400 }
+    );
+  }
   const id = createChannel({
     platform,
     account_name,
@@ -55,6 +67,7 @@ export async function POST(req: NextRequest) {
     timezone,
     remote_account_id: body.remote_account_id,
     linked_page_id: body.linked_page_id,
+    instagram_auth_method,
     access_token: body.access_token,
     requires_approval: !!body.requires_approval,
     color_hue: body.color_hue ?? null,
