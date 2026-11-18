@@ -21,7 +21,7 @@ CREATE TABLE telegram_dm_outbox (
   conversation_id TEXT NOT NULL,
   recipient_id TEXT NOT NULL,
   message_text TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('pending', 'sending', 'sent', 'unknown')),
+  status TEXT NOT NULL CHECK (status IN ('pending', 'sending', 'sent', 'unknown', 'cancelled')),
   meta_message_id TEXT,
   last_error TEXT,
   created_at TEXT NOT NULL,
