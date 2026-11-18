@@ -9,12 +9,16 @@ const STATE_COOKIE = "instagram_oauth_state";
 const CHANNEL_COOKIE = "instagram_oauth_channel_id";
 const REQUEST_TIMEOUT_MS = 20_000;
 
+type MetaIdentity = {
+  user_id?: number | string;
+  username?: string;
+};
+
 type MetaPayload = {
   access_token?: string;
   token_type?: string;
   expires_in?: number;
-  user_id?: number | string;
-  username?: string;
+  data?: MetaIdentity[];
   error?: unknown;
 };
 
@@ -143,7 +147,13 @@ export async function GET(req: NextRequest) {
       signal: timeout,
       cache: "no-store",
     });
-    const identity = await readJson(identityResponse);
+    const identityPayload = await readJson(identityResponse);
+    // Meta documents /me as { data: [{ user_id, username }] }. Require exactly
+    // one identity row; a flat or ambiguous response is not proof of account ownership.
+    const identity =
+      Array.isArray(identityPayload?.data) && identityPayload.data.length === 1
+        ? identityPayload.data[0]
+        : null;
     const remoteAccountId = identity?.user_id ? String(identity.user_id) : "";
     if (!identityResponse.ok || !remoteAccountId || !identity?.username) {
       return back(redirectUri, {
