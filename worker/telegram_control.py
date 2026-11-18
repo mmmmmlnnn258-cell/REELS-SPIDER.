@@ -413,6 +413,13 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                        (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
                     (int(update_id), chat_id),
                 )
+            from .operation_log import record_control_operation
+            record_control_operation(
+                conn, int(update_id),
+                "إيقاف النشر" if should_pause else "استئناف النشر",
+                "تم تحديث حالة التحكم العام بالنشر من Telegram.",
+                now=datetime.fromisoformat(now),
+            )
             state = "متوقف مؤقتاً" if should_pause else "نشط"
             label = "▶️ استئناف النشر" if should_pause else "⏸ إيقاف النشر"
             action = "resume" if should_pause else "pause"
@@ -605,6 +612,12 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 )
                 conn.execute("DELETE FROM telegram_schedule_sessions WHERE chat_id=?", (chat_id,))
             if changed.rowcount == 1:
+                from .operation_log import record_control_operation
+                record_control_operation(
+                    conn, int(update_id), "إلغاء جدولة",
+                    "أُلغي الموعد وحُفظ المنشور وملفاته دون حذف.",
+                    publication_id=publication_id, now=datetime.fromisoformat(now),
+                )
                 _send(client, token, chat_id,
                       f"تم إلغاء جدولة المنشور #{publication_id}. لم نحذف المنشور أو أي ملف وسائط. إذا لم تكن له مواعيد أخرى نشطة فستصبح حالته مسودة.",
                       {"inline_keyboard": [[{"text": "📅 إدارة الجدولة", "callback_data": "bs:schedule"}],
@@ -672,6 +685,12 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                            (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
                         (int(update_id), chat_id),
                     )
+            from .operation_log import record_control_operation
+            record_control_operation(
+                conn, int(update_id), "تقديم موعد للنشر",
+                "تم تقديم الموعد إلى الآن؛ هذا لا يعني أن Instagram أكد النشر.",
+                publication_id=publication_id, now=datetime.fromisoformat(now),
+            )
             _send(client, token, chat_id,
                   f"تم تقديم المنشور #{publication_id} إلى قائمة النشر الآن. لم نؤكد النشر بعد؛ سيعالج العامل الطلب وفق DRY_RUN وKILL_SWITCH.",
                   _menu())
@@ -876,6 +895,12 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                            (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
                         (int(update_id), chat_id),
                     )
+            from .operation_log import record_control_operation
+            record_control_operation(
+                conn, int(update_id), "تغيير أتمتة التعليقات",
+                f"{'تم تشغيل' if new_value else 'تم إيقاف'} أتمتة التعليقات للقاعدة #{rule_id}.",
+                now=datetime.now(timezone.utc),
+            )
             _send(client, token, chat_id,
                   f"{'تم تشغيل' if new_value else 'تم إيقاف'} أتمتة التعليقات للقاعدة #{rule_id}.",
                   _menu())
@@ -918,6 +943,13 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             with conn:
                 changed = conn.execute(f"UPDATE instagram_comment_rules SET {edit_session['field']}=?, updated_at=? WHERE id=?", (incoming_text, datetime.now(timezone.utc).isoformat(), edit_session["rule_id"]))
                 conn.execute("DELETE FROM telegram_comment_edit_sessions WHERE chat_id=?", (chat_id,))
+            if changed.rowcount:
+                from .operation_log import record_control_operation
+                record_control_operation(
+                    conn, int(update_id), "تعديل رد التعليقات",
+                    f"تم تحديث حقل الرد {edit_session['field']} للقاعدة #{edit_session['rule_id']}.",
+                    now=datetime.now(timezone.utc),
+                )
             _send(client, token, chat_id, "تم حفظ نص الرد." if changed.rowcount else "لم يتم الحفظ؛ القاعدة غير موجودة.", _menu())
             return True
         if dm_session:
@@ -972,6 +1004,12 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                     (int(update_id), chat_id),
                 )
             if changed.rowcount == 1:
+                from .operation_log import record_control_operation
+                record_control_operation(
+                    conn, int(update_id), "تعديل موعد",
+                    f"تم تعديل الموعد بالتوقيت المحلي {session['timezone']}.",
+                    publication_id=int(session["publication_id"]), now=now_dt,
+                )
                 _send(client, token, chat_id,
                       f"تم تأجيل المنشور #{session['publication_id']} إلى {_local_stamp(scheduled_utc.isoformat(), session['timezone'])} ({session['timezone']}). لم يتغير المنشور أو ملفاته.",
                       {"inline_keyboard": [[{"text": "📅 إدارة الجدولة", "callback_data": "bs:schedule"}],
