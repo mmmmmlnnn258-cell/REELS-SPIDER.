@@ -282,9 +282,10 @@ def retry_pending_notifications(conn, config, *, logger=None, limit: int = 20):
             WHERE event.notified_at IS NULL
               AND (event.status IN ('success','retrying','failed')
                    OR (event.event_type='رسالة خاصة يدوية' AND event.status='info'))
+              AND (event.event_type<>'رسالة خاصة يدوية' OR event.created_at<=?)
               AND (%s)
             ORDER BY event.created_at ASC,event.id ASC LIMIT ?""" % " OR ".join(eligibility),
-        (*parameters, max(1, min(int(limit), 100))),
+        (*parameters, retry_before, max(1, min(int(limit), 100))),
     ).fetchall()
     for row in rows:
         _notify_once(conn, row, config, logger=logger)
