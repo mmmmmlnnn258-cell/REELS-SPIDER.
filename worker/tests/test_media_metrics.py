@@ -138,11 +138,11 @@ def test_a_feed_video_is_not_treated_as_a_reel():
     assert not set(REELS_EXTRA_METRICS) & set(asked)
 
 
-def test_an_unknown_product_type_falls_back_to_the_feed_set():
-    """Safer default: the feed extras are valid for more media types than the Reels ones,
-    and a wrong guess here costs every metric on the post."""
+def test_an_unknown_product_type_uses_only_metrics_shared_by_all_media():
+    """Instagram Login does not expose media_product_type, so do not guess FEED."""
     asked = instagram_metrics_for({"media_product_type": None, "media_type": "IMAGE"})
-    assert not set(REELS_EXTRA_METRICS) & set(asked)
+    assert asked == REQUESTED_METRICS
+    assert not set(REELS_EXTRA_METRICS + FEED_EXTRA_METRICS) & set(asked)
 
 
 # -- due selection -------------------------------------------------------------------
