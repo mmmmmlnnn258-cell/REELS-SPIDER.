@@ -702,6 +702,35 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
     sender = message.get("from") or {}
     sender_id = str(sender.get("id", ""))
     if chat_id and chat_id in allowed and chat.get("type") == "private" and sender_id == chat_id:
+        edit_session = conn.execute("SELECT rule_id, field FROM telegram_comment_edit_sessions WHERE chat_id=?", (chat_id,)).fetchone()
+        dm_session = conn.execute("SELECT channel_id, conversation_id, recipient_id FROM telegram_dm_reply_sessions WHERE chat_id=?", (chat_id,)).fetchone()
+        incoming_text = str(message.get("text") or "").strip()
+        if incoming_text in {"/menu", "/start"} and (edit_session or dm_session):
+            with conn:
+                conn.execute("DELETE FROM telegram_comment_edit_sessions WHERE chat_id=?", (chat_id,))
+                conn.execute("DELETE FROM telegram_dm_reply_sessions WHERE chat_id=?", (chat_id,))
+            _send(client, token, chat_id, "تم إلغاء العملية الحالية.", _menu())
+            return True
+        if edit_session:
+            if not incoming_text or len(incoming_text) > 2200:
+                _send(client, token, chat_id, "نص الرد يجب أن يكون بين حرف واحد و2200 حرف.")
+                return True
+            with conn:
+                changed = conn.execute(f"UPDATE instagram_comment_rules SET {edit_session['field']}=?, updated_at=? WHERE id=?", (incoming_text, datetime.now(timezone.utc).isoformat(), edit_session["rule_id"]))
+                conn.execute("DELETE FROM telegram_comment_edit_sessions WHERE chat_id=?", (chat_id,))
+            _send(client, token, chat_id, "تم حفظ نص الرد." if changed.rowcount else "لم يتم الحفظ؛ القاعدة غير موجودة.", _menu())
+            return True
+        if dm_session:
+            if not incoming_text or len(incoming_text) > 1000:
+                _send(client, token, chat_id, "اكتب رداً بين حرف واحد و1000 حرف. لم يتم الإرسال.")
+                return True
+            now = datetime.now(timezone.utc).isoformat()
+            with conn:
+                cur = conn.execute("INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,message_text,status,created_at,updated_at) VALUES(?,?,?,?,?,'pending',?,?)", (chat_id, dm_session["channel_id"], dm_session["conversation_id"], dm_session["recipient_id"], incoming_text, now, now))
+                outbox_id = cur.lastrowid
+                conn.execute("DELETE FROM telegram_dm_reply_sessions WHERE chat_id=?", (chat_id,))
+            _send(client, token, chat_id, "معاينة الرد:\n\n" + incoming_text + "\n\nلم تُرسل الرسالة بعد. راجع النص ثم أكد.", {"inline_keyboard":[[{"text":"✅ تأكيد وإرسال","callback_data":f"bs:dm:send:{outbox_id}"}],[{"text":"❌ إلغاء","callback_data":"bs:menu"}]]})
+            return True
         session = conn.execute(
             "SELECT publication_id, timezone, created_at FROM telegram_schedule_sessions WHERE chat_id=?",
             (chat_id,),
