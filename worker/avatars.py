@@ -219,7 +219,7 @@ def run_avatars(conn, config, client, now, *, logger=None, client_for=None) -> i
                 conn.commit()
                 continue
 
-            data = pick_client(channel["platform"]).download_image_bytes(url)
+            data = pick_client(channel).download_image_bytes(url)
             ext = _image_extension(data)
             if ext is None:
                 raise ValueError(
