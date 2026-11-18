@@ -60,7 +60,7 @@ test("callback exchanges tokens server-side and stores Instagram Login on the se
     const url = String(input);
     requested.push(url);
     if (url.startsWith("https://api.instagram.com/oauth/access_token")) {
-      return jsonResponse({ access_token: "short-lived-secret", expires_in: 3600 });
+      return jsonResponse({ data: [{ access_token: "short-lived-secret", user_id: "app-scoped-id", permissions: "instagram_business_basic" }] });
     }
     if (url.startsWith("https://graph.instagram.com/access_token?")) {
       assert.match(url, /grant_type=ig_exchange_token/);
