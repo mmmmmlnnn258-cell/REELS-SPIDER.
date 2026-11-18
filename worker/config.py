@@ -254,6 +254,7 @@ class Config:
             graph_version=os.environ.get("META_GRAPH_VERSION", "v25.0"),
             # Instagram-Login path (recommended, no FB Page): https://graph.instagram.com
             # Facebook-Login / FB Pages path:                  https://graph.facebook.com
+            # Legacy Instagram channels only; explicit channel auth methods pin their own host.
             graph_base=os.environ.get("META_GRAPH_BASE", "https://graph.facebook.com"),
             default_timezone=os.environ.get("DEFAULT_TIMEZONE", "UTC"),
             poll_interval=int(os.environ.get("WORKER_POLL_INTERVAL", "30")),
