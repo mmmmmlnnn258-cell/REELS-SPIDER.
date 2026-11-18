@@ -201,6 +201,13 @@ def test_failed_telegram_alert_is_retried_on_later_worker_cycle(conn, config, ma
 
     telegram = FakeTelegram()
     monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
+    from datetime import datetime, timedelta, timezone
+    old_attempt = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+    conn.execute(
+        "UPDATE telegram_operation_notifications SET last_attempt_at=?",
+        (old_attempt,),
+    )
+    conn.commit()
     assert operation_log.retry_pending_notifications(conn, cfg) == 1
     assert len(telegram.messages) == 1
     assert conn.execute(
@@ -238,6 +245,13 @@ def test_partial_multi_chat_delivery_retries_only_the_missing_recipient(conn, co
     )
     assert telegram.calls == ["111", "222"]
     assert event["notified_at"] is None
+    from datetime import datetime, timedelta, timezone
+    old_attempt = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+    conn.execute(
+        "UPDATE telegram_operation_notifications SET last_attempt_at=? WHERE operation_id=? AND chat_id='222'",
+        (old_attempt, event["id"]),
+    )
+    conn.commit()
 
     operation_log.retry_pending_notifications(conn, cfg)
     assert telegram.calls == ["111", "222", "222"]
