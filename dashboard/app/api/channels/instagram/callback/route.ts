@@ -85,14 +85,6 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Do not persist an Instagram Login token while the worker is configured for the
-  // Facebook Login Graph host; that would make the card look connected but fail at runtime.
-  if (config.graphBase.replace(/\/+$/, "") !== INSTAGRAM_GRAPH_BASE) {
-    return back(req, {
-      instagram_error: "Instagram Login is not enabled because META_GRAPH_BASE is an installation-wide setting currently pointing to Facebook Login. Changing it may break existing Instagram channels; no channel credentials were changed. Per-channel login support is required before this connection can proceed.",
-    });
-  }
-
   const redirectUri = instagramCallbackUri(req.nextUrl.origin);
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
 
@@ -170,6 +162,7 @@ export async function GET(req: NextRequest) {
       remoteAccountId,
       accessToken: longToken.access_token,
       tokenExpiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      instagramAuthMethod: "instagram_login",
     });
     if (linked === "already_linked") {
       return back(req, {
