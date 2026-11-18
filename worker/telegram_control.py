@@ -464,10 +464,11 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                     "failed": "❌ فشل", "dry_run": "🧪 محاكاة", "info": "ℹ️ معلومات",
                 }
                 lines = [f"📋 سجل العمليات · صفحة {page + 1}/{page_count}"]
+                log_timezone = getattr(config, "default_timezone", None) or "UTC"
                 for row in rows:
-                    stamp = str(row["created_at"] or "").replace("T", " ")[:19]
+                    stamp = _local_stamp(row["created_at"], log_timezone)
                     lines.append(
-                        f"\n#{row['id']} · {labels.get(row['status'], row['status'])} · {stamp}\n"
+                        f"\n#{row['id']} · {labels.get(row['status'], row['status'])} · {stamp} ({log_timezone})\n"
                         f"{row['event_type']} · منشور #{row['publication_id'] or '—'} · "
                         f"{row['channel_name'] or 'قناة غير محددة'}\n"
                         f"{(row['caption'] or 'بدون وصف')[:100]}\n"
