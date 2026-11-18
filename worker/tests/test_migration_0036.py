@@ -4,7 +4,7 @@ def test_telegram_operation_notifications_schema_and_recipient_uniqueness(conn):
             "PRAGMA table_info(telegram_operation_notifications)"
         )
     }
-    assert {"id", "operation_id", "chat_id", "notified_at"} <= columns
+    assert {"id", "operation_id", "chat_id", "last_attempt_at", "attempt_count", "notified_at"} <= columns
     operation_id = conn.execute(
         """INSERT INTO telegram_operation_log(event_key,event_type,status,created_at)
            VALUES('notify-test','publish','success','2026-11-18T00:00:00Z')"""
