@@ -52,25 +52,45 @@ def _notify_once(conn, row, config, logger=None):
     )
     caption = (row["caption"] or "بدون وصف").replace("\\n", " ")[:180]
     message = (
-        f"{icon} BLACK SPIDER\n{heading}\n"
-        f"العملية: {row['event_type']} · #{row['publication_id'] or '—'}\n"
-        f"القناة: {row['channel_name'] or 'غير محددة'}\n"
-        f"المنشور: {caption}\n"
+        f"{icon} BLACK SPIDER\\n{heading}\\n"
+        f"العملية: {row['event_type']} · #{row['publication_id'] or '—'}\\n"
+        f"القناة: {row['channel_name'] or 'غير محددة'}\\n"
+        f"المنشور: {caption}\\n"
         f"التفاصيل: {(row['detail'] or 'لا توجد تفاصيل إضافية')[:900]}"
     )
-    try:
-        client = _telegram_client()
-        for chat_id in chats:
+    client = _telegram_client()
+    for chat_id in chats:
+        delivered = conn.execute(
+            """SELECT 1 FROM telegram_operation_notifications
+                WHERE operation_id=? AND chat_id=?""",
+            (row["id"], chat_id),
+        ).fetchone()
+        if delivered:
+            continue
+        try:
             client.send_message(config.telegram_bot_token, chat_id, message[:3900])
+            with conn:
+                conn.execute(
+                    """INSERT OR IGNORE INTO telegram_operation_notifications
+                       (operation_id,chat_id,notified_at) VALUES(?,?,?)""",
+                    (row["id"], chat_id, datetime.now(timezone.utc).isoformat()),
+                )
+        except Exception as exc:  # notification failure must never break the publishing worker
+            if logger:
+                logger.warning("BLACK SPIDER notification failed for operation %s/chat %s: %s",
+                               row["id"], chat_id, redact(str(exc))[:300])
+    remaining = conn.execute(
+        """SELECT COUNT(*) FROM telegram_operation_notifications
+            WHERE operation_id=? AND chat_id IN (%s)""" %
+        ",".join("?" for _ in chats),
+        (row["id"], *chats),
+    ).fetchone()[0]
+    if remaining == len(chats):
         with conn:
             conn.execute(
                 "UPDATE telegram_operation_log SET notified_at=? WHERE id=? AND notified_at IS NULL",
                 (datetime.now(timezone.utc).isoformat(), row["id"]),
             )
-    except Exception as exc:  # notification failure must never break the publishing worker
-        if logger:
-            logger.warning("BLACK SPIDER notification failed for operation %s: %s",
-                           row["id"], redact(str(exc))[:300])
 
 
 def record_publication_outcome(conn, publication_id: int, outcome, config, *,
@@ -149,14 +169,15 @@ def record_deferred_publication(conn, publication_id: int, config, detail: str, 
             WHERE pub.id=?""", (publication_id,)
     ).fetchone()
     safe_detail = redact(str(detail or "تعذر تنفيذ المحاولة."))[:700]
+    stamp = (now or datetime.now(timezone.utc)).isoformat()
     event = _insert_event(
         conn,
-        event_key=f"publication:{publication_id}:deferred:{safe_detail}",
+        event_key=f"publication:{publication_id}:deferred:{stamp[:13]}",
         event_type="نشر", status="retrying", publication_id=publication_id,
         channel_name=row["account_name"] if row else None,
         caption=row["caption"] if row else None,
         detail=f"لم تبدأ عملية النشر؛ ستبقى في الطابور لإعادة المحاولة. {safe_detail}",
-        created_at=(now or datetime.now(timezone.utc)).isoformat(),
+        created_at=stamp,
     )
     _notify_once(conn, event, config, logger=logger)
     return event
