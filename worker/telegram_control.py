@@ -566,12 +566,100 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             if not rows:
                 _send(client, token, chat_id, "لا توجد قواعد تعليقات مرتبطة بقنوات Instagram نشطة.", _menu())
                 return True
-            keyboard = {"inline_keyboard": [
-                [{"text": f"{'🟢' if row['enabled'] else '⚪'} قاعدة #{row['id']} · {'إيقاف' if row['enabled'] else 'تشغيل'}",
-                  "callback_data": f"bs:comment:{row['id']}"}]
-                for row in rows
-            ] + [[{"text": "↩ القائمة", "callback_data": "bs:menu"}]]}
-            _send(client, token, chat_id, "💬 قواعد أتمتة التعليقات\nاضغط لتبديل حالة القاعدة:", keyboard)
+            keyboard = [[{"text": f"{'🟢' if row['enabled'] else '⚪'} قاعدة #{row['id']} · {row['account_name']}",
+                          "callback_data": f"bs:comment:detail:{row['id']}"}] for row in rows]
+            keyboard.append([{"text": "↩ القائمة", "callback_data": "bs:menu"}])
+            _send(client, token, chat_id, "💬 إدارة التعليقات\nاختر قاعدة لعرض الردود والتحكم بها:", {"inline_keyboard": keyboard})
+            return True
+        if data == "bs:dms":
+            _dm_list(conn, client, graph_client_for, token, chat_id)
+            return True
+        if data.startswith("bs:dm:view:"):
+            parts = data.split(":")
+            if len(parts) != 5 or not parts[3].isdigit() or not parts[4].isdigit():
+                _send(client, token, chat_id, "طلب فتح محادثة غير صالح.", _menu())
+            else:
+                _dm_view(conn, client, graph_client_for, token, chat_id, int(parts[3]), parts[4])
+            return True
+        if data == "bs:dm:compose":
+            exists = conn.execute("SELECT 1 FROM telegram_dm_reply_sessions WHERE chat_id=?", (chat_id,)).fetchone()
+            if exists:
+                _send(client, token, chat_id, "اكتب نص الرد الآن. لن يُرسل حتى تراجع المعاينة وتضغط «تأكيد وإرسال». أرسل /menu للإلغاء.")
+            else:
+                _send(client, token, chat_id, "انتهت جلسة المحادثة. افتحها من صندوق الرسائل مجدداً.", _menu())
+            return True
+        if data.startswith("bs:dm:send:"):
+            raw_id = data.removeprefix("bs:dm:send:")
+            if not raw_id.isdigit() or len(raw_id) > 9:
+                _send(client, token, chat_id, "معرّف الإرسال غير صالح.", _menu())
+                return True
+            outbox_id = int(raw_id)
+            now = datetime.now(timezone.utc).isoformat()
+            with conn:
+                claim = conn.execute("""UPDATE telegram_dm_outbox SET status='sending',updated_at=?
+                    WHERE id=? AND chat_id=? AND status='pending'""", (now, outbox_id, chat_id))
+                row = conn.execute("SELECT * FROM telegram_dm_outbox WHERE id=? AND chat_id=?",
+                                   (outbox_id, chat_id)).fetchone()
+            if claim.rowcount != 1 or row is None:
+                _send(client, token, chat_id, "هذا الرد سبق تأكيده أو لم يعد متاحاً؛ لن نكرر الإرسال.", _menu())
+                return True
+            try:
+                channel = conn.execute("""SELECT remote_account_id,access_token FROM channels
+                    WHERE id=? AND platform='instagram' AND is_active=1""", (row["channel_id"],)).fetchone()
+                if channel is None or graph_client_for is None:
+                    raise RuntimeError("قناة Instagram غير متصلة أو عميل Meta غير متاح.")
+                result = graph_client_for("instagram").send_instagram_direct_message(
+                    str(channel["remote_account_id"]), row["recipient_id"], row["message_text"], channel["access_token"])
+                with conn:
+                    conn.execute("UPDATE telegram_dm_outbox SET status='sent',meta_message_id=?,updated_at=? WHERE id=?",
+                                 (str(result.get("message_id") or result.get("id") or ""), datetime.now(timezone.utc).isoformat(), outbox_id))
+                _send(client, token, chat_id, f"✅ أكدت Meta إرسال الرد بنجاح. رقم الرسالة: {result.get('message_id') or result.get('id') or 'غير متاح'}", _menu())
+            except Exception as exc:
+                from .redact import redact
+                with conn:
+                    conn.execute("UPDATE telegram_dm_outbox SET status='unknown',last_error=?,updated_at=? WHERE id=?",
+                                 (redact(str(exc))[:500], datetime.now(timezone.utc).isoformat(), outbox_id))
+                _send(client, token, chat_id, "⚠️ نتيجة الإرسال غير مؤكدة. لن نعيد المحاولة تلقائياً لتجنب تكرار الرسالة.\n" + redact(str(exc))[:300], _menu())
+            return True
+        if data.startswith("bs:comment:detail:"):
+            raw_id = data.removeprefix("bs:comment:detail:")
+            if raw_id.isdigit() and len(raw_id) <= 9:
+                _comment_rule_detail(conn, client, token, chat_id, int(raw_id))
+            else:
+                _send(client, token, chat_id, "رقم القاعدة غير صالح.", _menu())
+            return True
+        if data.startswith("bs:comment:edit:"):
+            parts = data.split(":")
+            if len(parts) != 5 or not parts[3].isdigit() or parts[4] not in {"public", "private"}:
+                _send(client, token, chat_id, "طلب التعديل غير صالح.", _menu())
+            else:
+                field = "public_reply_text" if parts[4] == "public" else "private_reply_text"
+                valid = conn.execute("""SELECT 1 FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id
+                    WHERE r.id=? AND c.platform='instagram' AND c.is_active=1
+                    AND c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL""", (int(parts[3]),)).fetchone()
+                if not valid:
+                    _send(client, token, chat_id, "القاعدة غير موجودة أو القناة غير متصلة.", _menu())
+                else:
+                    with conn:
+                        conn.execute("""INSERT INTO telegram_comment_edit_sessions(chat_id,rule_id,field,created_at)
+                            VALUES(?,?,?,?) ON CONFLICT(chat_id) DO UPDATE SET rule_id=excluded.rule_id,
+                            field=excluded.field,created_at=excluded.created_at""",
+                            (chat_id, int(parts[3]), field, datetime.now(timezone.utc).isoformat()))
+                    _send(client, token, chat_id, "أرسل نص الرد الجديد الآن. لن يتم إرسال رد أثناء التعديل. /menu للإلغاء.")
+            return True
+        if data.startswith("bs:comment:logs:"):
+            raw_id = data.removeprefix("bs:comment:logs:")
+            if not raw_id.isdigit():
+                _send(client, token, chat_id, "رقم القاعدة غير صالح.", _menu())
+            else:
+                rows = conn.execute("""SELECT comment_id,comment_text,status,last_error,created_at
+                    FROM instagram_comment_events WHERE rule_id=? ORDER BY created_at DESC LIMIT 10""",
+                    (int(raw_id),)).fetchall()
+                lines = [f"📜 سجل آخر 10 تعليقات للقاعدة #{raw_id}:"]
+                for row in rows:
+                    lines.append(f"\n{row['created_at']} · {row['status']} · #{row['comment_id']}\n{(row['comment_text'] or '')[:160]}\n{('خطأ: '+row['last_error'][:160]) if row['last_error'] else ''}")
+                _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[
+                    [{"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{raw_id}"}]]})
             return True
         if data.startswith("bs:comment:"):
             raw_id = data.removeprefix("bs:comment:")
