@@ -339,3 +339,24 @@ def test_telegram_ack_failure_does_not_downgrade_meta_confirmed_dm(conn, config)
     ).fetchone()
     assert event["status"] == "success"
     assert event["notified_at"] is None
+
+
+def test_facebook_login_dm_uses_page_id_to_identify_own_participant(conn, config):
+    channel = connected_channel(conn, linked_page_id="page-1")
+    graph = FakeGraph()
+    graph.base = "https://graph.facebook.com/v25.0"
+    graph.conversations[0]["participants"]["data"] = [
+        {"id": "page-1", "username": "our_page"},
+        {"id": "person-77", "username": "customer"},
+    ]
+    client = FakeTelegram()
+
+    process_control_update(
+        conn, cfg(config), client, cb(401, f"bs:dm:view:{channel}:9001"),
+        lambda platform: graph,
+    )
+    session = conn.execute(
+        "SELECT recipient_id FROM telegram_dm_reply_sessions WHERE chat_id='7441755677'"
+    ).fetchone()
+    assert session["recipient_id"] == "person-77"
+    assert "حسابك: " in client.messages[-1][1]
