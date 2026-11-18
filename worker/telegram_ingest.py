@@ -274,8 +274,8 @@ def process_update(conn, config, client: TelegramClient, update: dict[str, Any],
 
             cur = conn.execute(
                 """INSERT INTO posts
-                   (caption, post_type, status, created_by)
-                   VALUES (?, 'video', 'scheduled', 'telegram')""",
+                   (caption, post_type, status, content_kind, content_status, created_by)
+                   VALUES (?, 'video', 'scheduled', 'one_time', 'ready', 'telegram')""",
                 (caption,),
             )
             post_id = int(cur.lastrowid)
