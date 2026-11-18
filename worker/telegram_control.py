@@ -10,6 +10,7 @@ def _allowed(raw: str) -> set[str]:
 
 def _menu() -> dict:
     return {"inline_keyboard": [
+        [{"text": "🚀 نشر الآن", "callback_data": "bs:publish"}],
         [{"text": "📊 حالة النظام", "callback_data": "bs:status"},
          {"text": "🗓 المنشورات القادمة", "callback_data": "bs:posts"}],
         [{"text": "💬 أتمتة التعليقات", "callback_data": "bs:comments"}],
@@ -82,6 +83,68 @@ def process_control_update(conn, config, client, update: dict) -> bool:
                     lines.append(f"#{row['id']} · {row['status']} · {row['scheduled_at']}\n{caption}")
                 body = "\n".join(lines)
             _send(client, token, chat_id, body, _menu())
+            return True
+        if data == "bs:publish":
+            rows = conn.execute(
+                """SELECT pub.id, p.caption, pub.scheduled_at
+                     FROM publications pub
+                     JOIN posts p ON p.id = pub.post_id
+                     JOIN channels c ON c.id = pub.channel_id
+                    WHERE pub.status = 'scheduled' AND pub.is_held = 0
+                      AND c.platform = 'instagram' AND c.is_active = 1
+                      AND c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id) <> ''
+                      AND c.access_token IS NOT NULL AND TRIM(c.access_token) <> ''
+                    ORDER BY pub.scheduled_at ASC, pub.id ASC LIMIT 8"""
+            ).fetchall()
+            if not rows:
+                _send(client, token, chat_id,
+                      "لا توجد منشورات مجدولة جاهزة للنشر على قناة Instagram متصلة.", _menu())
+                return True
+            keyboard = {"inline_keyboard": [
+                [{"text": f"🚀 نشر المنشور #{row['id']} الآن",
+                  "callback_data": f"bs:publish:{row['id']}"}]
+                for row in rows
+            ] + [[{"text": "↩ القائمة", "callback_data": "bs:menu"}]]}
+            lines = ["🚀 اختر منشوراً مجدولاً لتقديم موعده إلى الآن:"]
+            for row in rows:
+                caption = (row["caption"] or "بدون وصف").replace("\\n", " ")[:60]
+                lines.append(f"#{row['id']} · {row['scheduled_at']}\\n{caption}")
+            _send(client, token, chat_id, "\\n".join(lines), keyboard)
+            return True
+        if data.startswith("bs:publish:"):
+            raw_id = data.removeprefix("bs:publish:")
+            if not raw_id.isdigit() or len(raw_id) > 9:
+                _send(client, token, chat_id, "طلب نشر غير صالح.", _menu())
+                return True
+            publication_id = int(raw_id)
+            now = datetime.now(timezone.utc).isoformat()
+            with conn:
+                row = conn.execute(
+                    """SELECT pub.id FROM publications pub
+                         JOIN channels c ON c.id = pub.channel_id
+                        WHERE pub.id = ? AND pub.status = 'scheduled' AND pub.is_held = 0
+                          AND c.platform = 'instagram' AND c.is_active = 1
+                          AND c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id) <> ''
+                          AND c.access_token IS NOT NULL AND TRIM(c.access_token) <> ''""",
+                    (publication_id,),
+                ).fetchone()
+                if row is None:
+                    _send(client, token, chat_id,
+                          "لم يتم تقديم المنشور: لم يعد مجدولاً أو أن قناة Instagram غير متصلة.", _menu())
+                    return True
+                conn.execute(
+                    "UPDATE publications SET scheduled_at=?, updated_at=? WHERE id=? AND status='scheduled' AND is_held=0",
+                    (now, now, publication_id),
+                )
+                if update_id is not None:
+                    conn.execute(
+                        """INSERT OR IGNORE INTO telegram_ingest_updates
+                           (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
+                        (int(update_id), chat_id),
+                    )
+            _send(client, token, chat_id,
+                  f"تم تقديم المنشور #{publication_id} إلى قائمة النشر الآن. لم نؤكد النشر بعد؛ سيعالج العامل الطلب وفق DRY_RUN وKILL_SWITCH.",
+                  _menu())
             return True
         if data == "bs:comments":
             rows = conn.execute(
