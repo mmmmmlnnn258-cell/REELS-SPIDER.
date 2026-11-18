@@ -375,3 +375,24 @@ def test_retry_recovers_recipient_not_attempted_before_worker_crash(conn, config
     assert conn.execute(
         "SELECT notified_at FROM telegram_operation_log WHERE id=?", (event["id"],)
     ).fetchone()[0]
+
+
+def test_dry_run_failure_does_not_hide_later_live_failure(conn, config, make_publication, monkeypatch):
+    pub = make_publication(post_type="single", n_assets=1)
+    telegram = FakeTelegram()
+    monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
+    cfg = replace(config, telegram_bot_token="test-token",
+                  telegram_allowed_chat_ids="7441755677")
+    simulated = operation_log.record_publication_outcome(
+        conn, pub["id"], SimpleNamespace(result="failed", detail="invalid test media"),
+        cfg, dry_run=True
+    )
+    live = operation_log.record_publication_outcome(
+        conn, pub["id"], SimpleNamespace(result="failed", detail="Meta rejected publish"),
+        cfg, dry_run=False
+    )
+    assert simulated["status"] == "dry_run"
+    assert live["status"] == "failed"
+    assert live["id"] != simulated["id"]
+    assert len(telegram.messages) == 1
+    assert "فشل النشر نهائياً" in telegram.messages[0][2]
