@@ -111,7 +111,15 @@ def record_publication_outcome(conn, publication_id: int, outcome, config, *,
     ).fetchone()
     if row is None or outcome.result == "skipped":
         return None
-    if outcome.result == "posted":
+    if dry_run and outcome.result != "dry_run":
+        # Validation can still reject a post during simulation. Record that result,
+        # but never describe it as a real Instagram publish failure or alert it as one.
+        status = "dry_run"
+        detail = (
+            "وضع المحاكاة نشط؛ لم تتم محاولة النشر على Instagram. "
+            f"نتيجة الفحص التجريبي: {outcome.detail or outcome.result}"
+        )
+    elif outcome.result == "posted":
         status = "success"
         if row["delivery_state"] == "inbox":
             detail = (
