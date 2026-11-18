@@ -72,7 +72,7 @@ test("callback exchanges tokens server-side and stores Instagram Login on the se
     }
     if (url.startsWith("https://graph.instagram.com/v27.0/me?")) {
       assert.match(url, /fields=user_id%2Cusername/);
-      return jsonResponse({ user_id: "ig-user-900", username: "test_creator" });
+      return jsonResponse({ data: [{ user_id: "ig-user-900", username: "test_creator" }] });
     }
     throw new Error(`Unexpected mocked Meta URL: ${url}`);
   }) as typeof fetch;
