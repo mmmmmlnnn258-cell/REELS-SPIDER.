@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 from . import db
-from .clients import FACEBOOK_BASE, THREADS_BASE
+from .clients import FACEBOOK_BASE, INSTAGRAM_BASE, THREADS_BASE
 from .redact import redact
 
 # Renew with two weeks to spare: a Mac that is off for a week, or a Meta outage, still
@@ -94,8 +94,17 @@ def _from_epoch(value) -> datetime | None:
     return datetime.fromtimestamp(value, tz=timezone.utc)
 
 
-def _uses_instagram_login(config) -> bool:
-    return "graph.instagram.com" in (config.graph_base or "")
+def _uses_instagram_login(channel, config) -> bool:
+    """Resolve token lifecycle from the channel, falling back only for legacy rows."""
+    keys = channel.keys() if hasattr(channel, "keys") else ()
+    method = channel["instagram_auth_method"] if "instagram_auth_method" in keys else "legacy"
+    if method == "instagram_login":
+        return True
+    if method == "facebook_login":
+        return False
+    if method == "legacy":
+        return "graph.instagram.com" in (config.graph_base or "")
+    raise ValueError(f"Unknown Instagram auth method: {method!r}")
 
 
 # -- per-platform steps ------------------------------------------------------------------
@@ -147,7 +156,7 @@ def _check_instagram_login(session, config, channel, now: datetime) -> dict:
     expires = _parse(channel["token_expires_at"])
     if expires and expires - now > RENEW_WITHIN:
         return {}
-    base = config.graph_base.rstrip("/")
+    base = INSTAGRAM_BASE
     try:
         return _renew(session, f"{base}/refresh_access_token", "ig_refresh_token", token, now)
     except _MetaError:
@@ -185,10 +194,11 @@ def _check_via_app_token(session, config, channel, now: datetime) -> dict:
     return update
 
 
-def _step_for(platform: str, config):
+def _step_for(channel, config):
+    platform = channel["platform"]
     if platform == "threads":
         return _check_threads
-    if platform == "instagram" and _uses_instagram_login(config):
+    if platform == "instagram" and _uses_instagram_login(channel, config):
         return _check_instagram_login
     return _check_via_app_token
 
@@ -199,7 +209,7 @@ def check_channel(conn, config, channel, now: datetime, session=None, logger=Non
     """Check (and if due, renew) one channel's token. Returns what happened, for logs and
     tests: 'renewed', 'ok', 'error', or 'retry'. Never raises for an API problem."""
     session = session or requests.Session()
-    step = _step_for(channel["platform"], config)
+    step = _step_for(channel, config)
     label = f"[token] channel {channel['id']} ({channel['platform']})"
     try:
         update = step(session, config, channel, now)
