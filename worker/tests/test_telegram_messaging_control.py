@@ -29,6 +29,11 @@ class FakeGraph:
             ]},
         }]
 
+    def get_media_comments(self, media_id, token, limit=50, next_url=None):
+        if self.fail:
+            raise RuntimeError("instagram_manage_comments permission required")
+        return ([{"id": "comment-1", "text": "السعر كم؟", "from": {"username": "customer"}}], None)
+
     def get_instagram_conversations(self, ig_user_id, token, limit=20):
         if self.fail:
             raise RuntimeError("instagram_manage_messages permission required")
@@ -164,3 +169,14 @@ def test_dm_list_surfaces_meta_permission_requirements(conn, config):
     graph = FakeGraph(fail=True)
     process_control_update(conn, cfg(config), client, cb(30, "bs:dms"), lambda _: graph)
     assert "instagram_manage_messages" in client.messages[-1][1]
+
+
+def test_comment_live_view_reads_from_meta_without_sending_replies(conn, config):
+    channel = connected_channel(conn)
+    rule = conn.execute("INSERT INTO instagram_comment_rules(channel_id,media_id,enabled) VALUES(?,?,1)", (channel, "media-1")).lastrowid
+    conn.commit()
+    client = FakeTelegram()
+    graph = FakeGraph()
+    process_control_update(conn, cfg(config), client, cb(40, f"bs:comment:fetch:{rule}"), lambda _: graph)
+    assert "السعر كم؟" in client.messages[-1][1]
+    assert graph.sent == []
