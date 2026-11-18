@@ -158,7 +158,7 @@ def _schedule_detail(conn, client, token: str, chat_id: str, publication_id: int
     _send(client, token, chat_id, body, keyboard)
 
 
-def process_control_update(conn, config, client, update: dict) -> bool:
+def process_control_update(conn, config, client, update: dict, graph_client_for=None) -> bool:
     """Handle /start, /menu and callback_query. Returns True when consumed.
 
     Authorization is checked against the chat ID before any database read or write.
