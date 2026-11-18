@@ -17,6 +17,7 @@ def _menu() -> dict:
         [{"text": "📊 حالة النظام", "callback_data": "bs:status"},
          {"text": "🗓 المنشورات القادمة", "callback_data": "bs:posts"}],
         [{"text": "💬 أتمتة التعليقات", "callback_data": "bs:comments"}],
+        [{"text": "⏯ إيقاف / استئناف النشر", "callback_data": "bs:publishing_control"}],
     ]}
 
 
@@ -196,6 +197,57 @@ def process_control_update(conn, config, client, update: dict) -> bool:
                 )
             _send(client, token, chat_id, "🕷 BLACK SPIDER\nاختر عملية:", _menu())
             return True
+        if data == "bs:publishing_control":
+            paused = conn.execute(
+                "SELECT is_paused FROM publishing_control WHERE id=1"
+            ).fetchone()["is_paused"]
+            action = "resume" if paused else "pause"
+            label = "▶️ استئناف النشر" if paused else "⏸ إيقاف النشر"
+            state = "متوقف مؤقتاً" if paused else "نشط"
+            with conn:
+                conn.execute(
+                    """INSERT OR IGNORE INTO telegram_ingest_updates
+                       (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
+                    (int(update_id), chat_id),
+                )
+            _send(client, token, chat_id,
+                  f"⏯ التحكم بالنشر\nالحالة العامة: {state}\nهذا التحكم يشمل جميع القنوات. المنشورات ومواعيدها محفوظة.",
+                  {"inline_keyboard": [
+                      [{"text": label, "callback_data": f"bs:publishing:{action}"}],
+                      [{"text": "↩ القائمة", "callback_data": "bs:menu"}],
+                  ]})
+            return True
+        if data in {"bs:publishing:pause", "bs:publishing:resume"}:
+            should_pause = 1 if data.endswith(":pause") else 0
+            now = datetime.now(timezone.utc).isoformat()
+            with conn:
+                conn.execute(
+                    """UPDATE publishing_control
+                          SET is_paused=?, updated_at=?, updated_by_chat_id=?
+                        WHERE id=1""",
+                    (should_pause, now, chat_id),
+                )
+                conn.execute(
+                    """INSERT OR IGNORE INTO telegram_ingest_updates
+                       (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
+                    (int(update_id), chat_id),
+                )
+            state = "متوقف مؤقتاً" if should_pause else "نشط"
+            label = "▶️ استئناف النشر" if should_pause else "⏸ إيقاف النشر"
+            action = "resume" if should_pause else "pause"
+            message = (
+                "تم إيقاف بدء عمليات النشر الجديدة على جميع القنوات. "
+                "العملية التي بدأت بالفعل ستكمل بأمان، وبقية المنشورات ومواعيدها محفوظة."
+                if should_pause else
+                "تم استئناف النشر على جميع القنوات. سيعالج العامل المنشورات المستحقة والمتأخرة تلقائياً حسب ترتيب الطابور وإعدادات إعادة المحاولة."
+            )
+            _send(client, token, chat_id,
+                  f"{message}\nالحالة الحالية: {state}",
+                  {"inline_keyboard": [
+                      [{"text": label, "callback_data": f"bs:publishing:{action}"}],
+                      [{"text": "↩ القائمة", "callback_data": "bs:menu"}],
+                  ]})
+            return True
         if data == "bs:status":
             heartbeat = conn.execute("SELECT last_seen_at FROM worker_heartbeat WHERE id=1").fetchone()
             channels = conn.execute(
@@ -207,7 +259,7 @@ def process_control_update(conn, config, client, update: dict) -> bool:
             failed = conn.execute("SELECT COUNT(*) FROM publications WHERE status='failed'").fetchone()[0]
             stamp = heartbeat["last_seen_at"] if heartbeat else "غير متوفر"
             _send(client, token, chat_id,
-                  f"📊 حالة النظام\nآخر نبضة Worker: {stamp}\nقنوات Instagram المتصلة والنشطة: {channels}\nمنشورات مجدولة: {queued}\nمنشورات فاشلة: {failed}",
+                  f"📊 حالة النظام\nآخر نبضة Worker: {stamp}\nقنوات Instagram المتصلة والنشطة: {channels}\nحالة النشر العامة: {'متوقف مؤقتاً' if conn.execute('SELECT is_paused FROM publishing_control WHERE id=1').fetchone()['is_paused'] else 'نشط'}\nمنشورات مجدولة: {queued}\nمنشورات فاشلة: {failed}",
                   _menu())
             return True
         if data == "bs:posts":
