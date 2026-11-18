@@ -123,8 +123,8 @@ export default async function ChannelsPage({
           <div className="rounded-card border border-status-posted bg-surface-muted p-4 text-sm text-ink-soft">
             <span className="font-medium text-ink">Instagram connected.</span>{" "}
             {params.instagram_username
-              ? `@\${params.instagram_username} was linked to channel #\${params.instagram_connected}.`
-              : `Channel #\${params.instagram_connected} was linked successfully.`}
+              ? `@${params.instagram_username} was linked to channel #${params.instagram_connected}.`
+              : `Channel #${params.instagram_connected} was linked successfully.`}
           </div>
         ) : null}
         {params.instagram_error ? (
@@ -270,12 +270,12 @@ export default async function ChannelsPage({
                         </p>
                         {params.instagram_connected === String(c.id) ? (
                           <p className="mt-1 text-[11px] font-medium text-status-posted">
-                            Connected{params.instagram_username ? ` as @\${params.instagram_username}` : ""}.
+                            Connected{params.instagram_username ? ` as @${params.instagram_username}` : ""}.
                           </p>
                         ) : null}
                       </div>
                       <a
-                        href={`/api/channels/instagram/authorize?channel_id=\${c.id}`}
+                        href={`/api/channels/instagram/authorize?channel_id=${c.id}`}
                         className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink hover:bg-surface"
                       >
                         {c.access_token && c.remote_account_id ? "Reconnect Instagram" : "ربط Instagram"}
