@@ -67,6 +67,19 @@ export async function PATCH(
       { status: 400 }
     );
   }
+  // Instagram Login credentials are a single verified tuple written atomically by
+  // connectInstagramChannel() after OAuth. Do not let the generic channel editor
+  // replace either half (account id or token) independently.
+  if (
+    existingChannel.platform === "instagram" &&
+    existingChannel.instagram_auth_method === "instagram_login" &&
+    ("remote_account_id" in body || "access_token" in body)
+  ) {
+    return NextResponse.json(
+      { error: "Instagram Login account ID and access token can only be changed by completing Instagram OAuth." },
+      { status: 400 }
+    );
+  }
   if ("remote_account_id" in body) fields.remote_account_id = body.remote_account_id || null;
   if ("linked_page_id" in body) fields.linked_page_id = body.linked_page_id || null;
   if ("access_token" in body) {
