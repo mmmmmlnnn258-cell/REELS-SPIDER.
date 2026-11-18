@@ -268,3 +268,35 @@ def test_comment_live_view_reads_from_meta_without_sending_replies(conn, config)
     process_control_update(conn, cfg(config), client, cb(40, f"bs:comment:fetch:{rule}"), lambda _: graph)
     assert "السعر كم؟" in client.messages[-1][1]
     assert graph.sent == []
+
+
+def test_dm_inbox_supports_opaque_meta_conversation_ids(conn, config):
+    channel = connected_channel(conn)
+    graph = FakeGraph()
+    graph.conversations[0]["id"] = "t_opaque-conversation_abc-123"
+    client = FakeTelegram()
+    graph_for = lambda platform: graph
+
+    process_control_update(conn, cfg(config), client, cb(300, "bs:dms"), graph_for)
+    keyboard = client.messages[-1][2]["inline_keyboard"]
+    callback_data = next(
+        button["callback_data"]
+        for row in keyboard for button in row
+        if button["callback_data"].startswith("bs:dm:view:")
+    )
+    assert callback_data.count(":") == 3
+    ref_id = callback_data.rsplit(":", 1)[1]
+    assert ref_id.isdigit()
+    stored = conn.execute(
+        "SELECT conversation_id,channel_id,chat_id FROM telegram_dm_conversation_refs WHERE id=?",
+        (int(ref_id),),
+    ).fetchone()
+    assert stored["conversation_id"] == "t_opaque-conversation_abc-123"
+    assert stored["channel_id"] == channel
+    assert stored["chat_id"] == "7441755677"
+
+    process_control_update(conn, cfg(config), client, cb(301, callback_data), graph_for)
+    assert "مرحبا" in client.messages[-1][1]
+    assert conn.execute(
+        "SELECT conversation_id FROM telegram_dm_reply_sessions WHERE chat_id='7441755677'"
+    ).fetchone()[0] == "t_opaque-conversation_abc-123"
