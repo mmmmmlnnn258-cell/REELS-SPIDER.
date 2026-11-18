@@ -27,7 +27,7 @@ async function setup() {
 
 function callbackRequest(channelId: number, state = "valid-state") {
   return new NextRequest(
-    `https://scheduler.example.test/api/channels/instagram/callback?code=auth-code&state=${state}`,
+    `https://attacker.invalid/api/channels/instagram/callback?code=auth-code&state=${state}`,
     {
       headers: {
         cookie: `instagram_oauth_state=valid-state; instagram_oauth_channel_id=${channelId}`,
@@ -83,6 +83,7 @@ test("callback exchanges tokens server-side and stores Instagram Login on the se
     const channel = q.getChannel(channelId)!;
 
     assert.equal(response.status, 307);
+    assert.equal(new URL(location).origin, "https://scheduler.example.test");
     assert.match(location, /instagram_connected=/);
     assert.match(location, /instagram_username=test_creator/);
     assert.equal(location.includes("long-lived-secret"), false);
