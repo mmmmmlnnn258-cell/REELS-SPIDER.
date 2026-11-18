@@ -166,3 +166,17 @@ def test_no_connected_active_instagram_channel_fails_closed(conn, config, tmp_pa
     assert process_update(conn, cfg, client, video_update()) == "failed"
     assert conn.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0
     assert conn.execute("SELECT status FROM telegram_ingest_updates").fetchone()["status"] == "failed"
+
+
+
+def test_start_command_discloses_own_chat_id_only_in_discovery_mode(conn, config):
+    cfg = configured(config, telegram_allowed_chat_ids="")
+    client = FakeTelegram()
+    update = {
+        "update_id": 101,
+        "message": {"chat": {"id": 42}, "text": "/start"},
+    }
+    assert process_update(conn, cfg, client, update) == "ignored"
+    assert client.messages
+    assert "42" in client.messages[0][1]
+    assert conn.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0
