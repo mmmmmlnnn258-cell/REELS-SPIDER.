@@ -229,6 +229,7 @@ export default async function ChannelsPage({
                 </div>
 
                 <ChannelCredentials
+                  key={`${c.id}-${c.instagram_auth_method}`}
                   channelId={c.id}
                   platform={c.platform}
                   remoteAccountId={c.remote_account_id}
