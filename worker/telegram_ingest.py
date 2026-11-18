@@ -332,7 +332,7 @@ def process_update(conn, config, client: TelegramClient, update: dict[str, Any],
         return "failed"
 
 
-def run_forever(config, logger: logging.Logger, stop_event: threading.Event) -> None:
+def run_forever(config, logger: logging.Logger, stop_event: threading.Event, client_for=None) -> None:
     token = config.telegram_bot_token.strip()
     allowed = _allowed_chat_ids(config.telegram_allowed_chat_ids)
     if not token:
@@ -361,7 +361,7 @@ def run_forever(config, logger: logging.Logger, stop_event: threading.Event) -> 
                     if stop_event.is_set():
                         break
                     from .telegram_control import process_control_update
-                    if process_control_update(conn, config, client, update):
+                    if process_control_update(conn, config, client, update, graph_client_for=client_for):
                         message = update.get("message") or (update.get("callback_query") or {}).get("message") or {}
                         chat = message.get("chat") or {}
                         _record_update(conn, int(update["update_id"]), str(chat.get("id", "")) or None, "ignored")
