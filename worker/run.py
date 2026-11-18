@@ -149,12 +149,17 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
             except Exception as exc:  # noqa: BLE001 — deliberately broad; never crash the daemon
                 if logger:
                     logger.error("publish endpoint unavailable: %s", exc)
+                from .operation_log import record_deferred_publication
                 for pub in due:
                     if pub["id"] in tunnel_needed_ids:
+                        error = redact(f"publish endpoint unavailable: {exc}")
                         db.update_publication(
                             conn, pub["id"],
-                            last_error=redact(f"publish endpoint unavailable: {exc}"),
+                            last_error=error,
                             updated_at=now.isoformat(),
+                        )
+                        record_deferred_publication(
+                            conn, int(pub["id"]), config, error, logger=logger, now=now,
                         )
                 due = [pub for pub in due if pub["id"] not in tunnel_needed_ids]
 
