@@ -6,6 +6,7 @@ on:
       - feature/instagram-comment-dm
       - feature/telegram-video-ingest
       - feature/black-spider-full-control
+      - feature/instagram-oauth-connect
   pull_request:
     branches:
       - main
@@ -38,6 +39,7 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
       - run: npm ci
+      - run: npm test
       - run: npm run lint
       - run: npm run build
 
