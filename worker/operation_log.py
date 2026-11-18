@@ -75,7 +75,7 @@ def record_publication_outcome(conn, publication_id: int, outcome, config, *,
     """Persist one outcome idempotently and notify for real success/retry/failure only."""
     row = conn.execute(
         """SELECT pub.id,pub.status,pub.attempt_count,pub.last_error,pub.remote_post_id,
-                  p.caption,c.account_name
+                  pub.delivery_state,p.caption,c.account_name,c.platform
              FROM publications pub JOIN posts p ON p.id=pub.post_id
              JOIN channels c ON c.id=pub.channel_id WHERE pub.id=?""",
         (publication_id,),
@@ -84,7 +84,13 @@ def record_publication_outcome(conn, publication_id: int, outcome, config, *,
         return None
     if outcome.result == "posted":
         status = "success"
-        detail = f"تم تأكيد النشر من المنصة. المعرّف: {row['remote_post_id'] or outcome.detail}"
+        if row["delivery_state"] == "inbox":
+            detail = (
+                "تم تسليم الفيديو إلى صندوق النشر في المنصة؛ لم يتم تأكيد نشره على الحساب بعد. "
+                f"المعرّف: {outcome.detail}"
+            )
+        else:
+            detail = f"تم تأكيد النشر من المنصة. المعرّف: {row['remote_post_id'] or outcome.detail}"
     elif outcome.result == "dry_run":
         status = "dry_run"
         detail = "محاكاة فقط؛ لم يتم إرسال أي شيء إلى Instagram."
@@ -101,8 +107,9 @@ def record_publication_outcome(conn, publication_id: int, outcome, config, *,
         status = "info"
         detail = outcome.detail
     event_key = f"publication:{publication_id}:{outcome.result}:{row['attempt_count']}"
+    event_type = "تسليم لصندوق النشر" if outcome.result == "posted" and row["delivery_state"] == "inbox" else "نشر"
     event = _insert_event(
-        conn, event_key=event_key, event_type="نشر", status=status,
+        conn, event_key=event_key, event_type=event_type, status=status,
         publication_id=publication_id, channel_name=row["account_name"],
         caption=row["caption"], detail=detail,
         created_at=(now or datetime.now(timezone.utc)).isoformat(),
