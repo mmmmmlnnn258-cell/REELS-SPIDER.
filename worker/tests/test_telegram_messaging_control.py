@@ -237,7 +237,7 @@ def test_dm_list_surfaces_meta_permission_requirements(conn, config):
     client = FakeTelegram()
     graph = FakeGraph(fail=True)
     process_control_update(conn, cfg(config), client, cb(30, "bs:dms"), lambda _: graph)
-    assert "instagram_manage_messages" in client.messages[-1][1]
+    assert "instagram_business_manage_messages" in client.messages[-1][1]
 
 
 def test_comment_live_view_reads_from_meta_without_sending_replies(conn, config):
