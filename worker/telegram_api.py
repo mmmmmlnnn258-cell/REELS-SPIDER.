@@ -37,10 +37,13 @@ class TelegramClient:
     def _url(self, token: str, method: str) -> str:
         return f"{self.base_url}/bot{token}/{method}"
 
-    def _call(self, token: str, method: str, data: dict, files: dict | None = None) -> dict:
+    def _call(self, token: str, method: str, data: dict, files: dict | None = None,
+              request_timeout: int | None = None) -> dict:
         url = self._url(token, method)
         try:
-            resp = self.session.post(url, data=data, files=files, timeout=self.timeout)
+            resp = self.session.post(
+                url, data=data, files=files, timeout=request_timeout or self.timeout
+            )
         except requests.RequestException as exc:
             # The token lives in the URL path, and exc's own str() embeds that URL (e.g.
             # a ConnectionError repeats the request URL) — redact before it's raised.
