@@ -127,8 +127,8 @@ def test_posts_callback_joins_caption_from_posts_table(conn, config):
 
 def test_replayed_comment_toggle_update_is_idempotent(conn, config):
     channel = conn.execute(
-        """INSERT INTO channels(platform, account_name)
-           VALUES ('instagram', 'test')"""
+        """INSERT INTO channels(platform, account_name, remote_account_id, access_token)
+           VALUES ('instagram', 'test', 'ig-test', 'test-token')"""
     ).lastrowid
     rule_id = conn.execute(
         """INSERT INTO instagram_comment_rules(channel_id, media_id, enabled)
