@@ -143,3 +143,91 @@ def test_replayed_comment_toggle_update_is_idempotent(conn, config):
     assert conn.execute(
         "SELECT enabled FROM instagram_comment_rules WHERE id=?", (rule_id,)
     ).fetchone()[0] == 1
+
+
+
+def test_main_menu_exposes_publish_now_action(conn, config):
+    client = FakeTelegram()
+    update = {"update_id": 901, "message": {
+        "text": "/start", "from": {"id": 7441755677},
+        "chat": {"id": 7441755677, "type": "private"}}}
+    assert process_control_update(conn, cfg(config), client, update)
+    keyboard = client.messages[0][2]["inline_keyboard"]
+    assert any(button["callback_data"] == "bs:publish"
+               for row in keyboard for button in row)
+
+
+def test_publish_now_lists_only_scheduled_posts_on_connected_instagram(conn, config):
+    channel = conn.execute(
+        """INSERT INTO channels(platform, account_name, remote_account_id, access_token, is_active)
+           VALUES ('instagram', 'connected', 'ig-1', 'secret', 1)"""
+    ).lastrowid
+    post = conn.execute(
+        "INSERT INTO posts(caption, post_type, status) VALUES ('Ready caption', 'reel', 'scheduled')"
+    ).lastrowid
+    conn.execute(
+        """INSERT INTO publications(post_id, channel_id, scheduled_at, status)
+           VALUES (?, ?, '2099-01-01T12:00:00Z', 'scheduled')""",
+        (post, channel),
+    )
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(conn, cfg(config), client, callback(data="bs:publish"))
+    assert "Ready caption" in client.messages[0][1]
+    buttons = client.messages[0][2]["inline_keyboard"]
+    assert buttons[0][0]["callback_data"].startswith("bs:publish:")
+
+
+def test_publish_now_moves_only_selected_scheduled_publication_to_due_queue(conn, config):
+    channel = conn.execute(
+        """INSERT INTO channels(platform, account_name, remote_account_id, access_token, is_active)
+           VALUES ('instagram', 'connected', 'ig-1', 'secret', 1)"""
+    ).lastrowid
+    post = conn.execute(
+        "INSERT INTO posts(caption, post_type, status) VALUES ('Ready caption', 'reel', 'scheduled')"
+    ).lastrowid
+    publication = conn.execute(
+        """INSERT INTO publications(post_id, channel_id, scheduled_at, status)
+           VALUES (?, ?, '2099-01-01T12:00:00Z', 'scheduled')""",
+        (post, channel),
+    ).lastrowid
+    conn.commit()
+    update = callback(update_id=902, data=f"bs:publish:{publication}")
+    client = FakeTelegram()
+    assert process_control_update(conn, cfg(config), client, update)
+    row = conn.execute(
+        "SELECT status, scheduled_at FROM publications WHERE id=?", (publication,)
+    ).fetchone()
+    assert row["status"] == "scheduled"
+    assert row["scheduled_at"] < "2099-01-01T12:00:00Z"
+    assert "لم نؤكد النشر بعد" in client.messages[0][1]
+    assert process_control_update(conn, cfg(config), client, update)
+    assert conn.execute(
+        "SELECT scheduled_at FROM publications WHERE id=?", (publication,)
+    ).fetchone()[0] == row["scheduled_at"]
+
+
+def test_publish_now_rejects_unconnected_or_non_scheduled_publication(conn, config):
+    channel = conn.execute(
+        """INSERT INTO channels(platform, account_name, remote_account_id, access_token, is_active)
+           VALUES ('instagram', 'draft', NULL, NULL, 1)"""
+    ).lastrowid
+    post = conn.execute(
+        "INSERT INTO posts(caption, post_type, status) VALUES ('Not connected', 'reel', 'scheduled')"
+    ).lastrowid
+    publication = conn.execute(
+        """INSERT INTO publications(post_id, channel_id, scheduled_at, status)
+           VALUES (?, ?, '2099-01-01T12:00:00Z', 'pending_approval')""",
+        (post, channel),
+    ).lastrowid
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), client, callback(update_id=903, data=f"bs:publish:{publication}")
+    )
+    assert conn.execute(
+        "SELECT status, scheduled_at FROM publications WHERE id=?", (publication,)
+    ).fetchone() == conn.execute(
+        "SELECT status, scheduled_at FROM publications WHERE id=?", (publication,)
+    ).fetchone()
+    assert "لم يتم تقديم المنشور" in client.messages[0][1]
