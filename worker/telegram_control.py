@@ -162,7 +162,7 @@ def _schedule_detail(conn, client, token: str, chat_id: str, publication_id: int
 
 
 def _connected_ig_channels(conn):
-    return conn.execute("""SELECT id, account_name, remote_account_id, access_token
+    return conn.execute("""SELECT id, account_name, remote_account_id, linked_page_id, access_token
         FROM channels WHERE platform='instagram' AND is_active=1
         AND remote_account_id IS NOT NULL AND TRIM(remote_account_id)<>''
         AND access_token IS NOT NULL AND TRIM(access_token)<>'' ORDER BY id""").fetchall()
@@ -229,7 +229,7 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
 
 
 def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, conversation_id):
-    channel = conn.execute("""SELECT id,account_name,remote_account_id,access_token FROM channels
+    channel = conn.execute("""SELECT id,account_name,remote_account_id,linked_page_id,access_token FROM channels
         WHERE id=? AND platform='instagram' AND is_active=1 AND remote_account_id IS NOT NULL
         AND access_token IS NOT NULL""", (channel_id,)).fetchone()
     if channel is None or graph_client_for is None:
@@ -604,7 +604,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 _send(client, token, chat_id, "هذا الرد سبق تأكيده أو لم يعد متاحاً؛ لن نكرر الإرسال.", _menu())
                 return True
             try:
-                channel = conn.execute("""SELECT remote_account_id,access_token FROM channels
+                channel = conn.execute("""SELECT remote_account_id,linked_page_id,access_token FROM channels
                     WHERE id=? AND platform='instagram' AND is_active=1""", (row["channel_id"],)).fetchone()
                 if channel is None or graph_client_for is None:
                     raise RuntimeError("قناة Instagram غير متصلة أو عميل Meta غير متاح.")
