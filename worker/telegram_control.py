@@ -615,8 +615,12 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                     WHERE id=? AND platform='instagram' AND is_active=1""", (row["channel_id"],)).fetchone()
                 if channel is None or graph_client_for is None:
                     raise RuntimeError("قناة Instagram غير متصلة أو عميل Meta غير متاح.")
-                result = graph_client_for("instagram").send_instagram_direct_message(
-                    str(channel["remote_account_id"]), row["recipient_id"], row["message_text"], channel["access_token"])
+                graph = graph_client_for("instagram")
+                messaging_id = (str(channel["remote_account_id"]) if "graph.instagram.com" in getattr(graph, "base", "") else str(channel["linked_page_id"] or ""))
+                if not messaging_id:
+                    raise RuntimeError("يلزم ربط صفحة Facebook لإرسال الرسائل عبر Facebook Login.")
+                result = graph.send_instagram_direct_message(
+                    messaging_id, row["recipient_id"], row["message_text"], channel["access_token"])
                 with conn:
                     conn.execute("UPDATE telegram_dm_outbox SET status='sent',meta_message_id=?,updated_at=? WHERE id=?",
                                  (str(result.get("message_id") or result.get("id") or ""), datetime.now(timezone.utc).isoformat(), outbox_id))
