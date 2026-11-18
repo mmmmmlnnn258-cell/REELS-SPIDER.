@@ -27,6 +27,12 @@ test("authorize URL uses Instagram Business Login and current permission names",
   assert.equal(url.searchParams.get("response_type"), "code");
   assert.equal(url.searchParams.get("state"), "random-state");
   assert.equal(url.searchParams.get("enable_fb_login"), "0");
+  assert.deepEqual(INSTAGRAM_SCOPES, [
+    "instagram_business_basic",
+    "instagram_business_content_publish",
+    "instagram_business_manage_comments",
+    "instagram_business_manage_messages",
+  ]);
   assert.equal(url.searchParams.get("scope"), INSTAGRAM_SCOPES.join(","));
   assert.ok(INSTAGRAM_SCOPES.includes("instagram_business_basic"));
   assert.ok(INSTAGRAM_SCOPES.includes("instagram_business_content_publish"));
