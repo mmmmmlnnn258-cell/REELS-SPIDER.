@@ -40,6 +40,14 @@ def fetch_due_publications(conn: sqlite3.Connection, now_iso: str) -> list[sqlit
     ).fetchall()
 
 
+def is_publishing_paused(conn: sqlite3.Connection) -> bool:
+    """Return the persisted global publishing pause state (false on an unseeded row)."""
+    row = conn.execute(
+        "SELECT is_paused FROM publishing_control WHERE id = 1"
+    ).fetchone()
+    return bool(row["is_paused"]) if row else False
+
+
 def get_channel(conn: sqlite3.Connection, channel_id: int) -> sqlite3.Row | None:
     return conn.execute(
         "SELECT * FROM channels WHERE id = ?", (channel_id,)
@@ -99,7 +107,9 @@ def claim_publication(conn: sqlite3.Connection, publication_id: int, now_iso: st
     """
     cur = conn.execute(
         "UPDATE publications SET status = 'publishing', last_error = NULL, updated_at = ? "
-        "WHERE id = ? AND status = 'scheduled' AND is_held = 0",
+        "WHERE id = ? AND status = 'scheduled' AND is_held = 0 "
+        "AND NOT EXISTS (SELECT 1 FROM publishing_control "
+        "WHERE id = 1 AND is_paused = 1)",
         (now_iso, publication_id),
     )
     conn.commit()
