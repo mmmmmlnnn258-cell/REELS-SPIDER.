@@ -225,9 +225,9 @@ def test_publish_now_rejects_unconnected_or_non_scheduled_publication(conn, conf
     assert process_control_update(
         conn, cfg(config), client, callback(update_id=903, data=f"bs:publish:{publication}")
     )
-    assert conn.execute(
-        "SELECT status, scheduled_at FROM publications WHERE id=?", (publication,)
-    ).fetchone() == conn.execute(
+    row = conn.execute(
         "SELECT status, scheduled_at FROM publications WHERE id=?", (publication,)
     ).fetchone()
+    assert row["status"] == "pending_approval"
+    assert row["scheduled_at"] == "2099-01-01T12:00:00Z"
     assert "لم يتم تقديم المنشور" in client.messages[0][1]
