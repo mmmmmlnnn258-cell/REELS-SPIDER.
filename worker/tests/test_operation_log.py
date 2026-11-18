@@ -289,3 +289,20 @@ def test_repeated_recovery_after_a_new_attempt_is_logged_again(conn, config, mak
         "SELECT COUNT(*) FROM telegram_operation_log WHERE publication_id=? AND status='failed'",
         (pub["id"],),
     ).fetchone()[0] == 2
+
+
+def test_dry_run_validation_failure_is_not_reported_as_live_publish_failure(
+    conn, config, make_publication, monkeypatch
+):
+    pub = make_publication(post_type="single", n_assets=1)
+    telegram = FakeTelegram()
+    monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
+    cfg = replace(config, telegram_bot_token="test-token",
+                  telegram_allowed_chat_ids="7441755677")
+    event = operation_log.record_publication_outcome(
+        conn, pub["id"], SimpleNamespace(result="failed", detail="invalid test media"),
+        cfg, dry_run=True
+    )
+    assert event["status"] == "dry_run"
+    assert "لم تتم محاولة النشر على Instagram" in event["detail"]
+    assert telegram.messages == []
