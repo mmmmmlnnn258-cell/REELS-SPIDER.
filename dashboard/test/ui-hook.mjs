@@ -4,17 +4,8 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 const dashboardRoot = new URL("../", import.meta.url);
-const clientReactModules = new Map([
-  ["react", new URL("../node_modules/react/index.js", import.meta.url)],
-  ["react/jsx-runtime", new URL("../node_modules/react/jsx-runtime.js", import.meta.url)],
-  ["react/jsx-dev-runtime", new URL("../node_modules/react/jsx-dev-runtime.js", import.meta.url)],
-  ["react-dom/server", new URL("../node_modules/react-dom/server.node.js", import.meta.url)],
-]);
-
 registerHooks({
   resolve(spec, ctx, next) {
-    const clientReactModule = clientReactModules.get(spec);
-    if (clientReactModule) return next(clientReactModule.href, ctx);
     if (spec === "next/link") {
       return next(new URL("./react-link-stub.mjs", import.meta.url).href, ctx);
     }
