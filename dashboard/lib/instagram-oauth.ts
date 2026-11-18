@@ -10,7 +10,7 @@ export const INSTAGRAM_GRAPH_BASE = "https://graph.instagram.com";
 
 export const INSTAGRAM_SCOPES = [
   "instagram_business_basic",
-  "instagram_business_content_publish",
+  "instagram_business_content_publishing",
   "instagram_business_manage_comments",
   "instagram_business_manage_messages",
 ] as const;
