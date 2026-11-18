@@ -167,7 +167,7 @@ def test_expired_dm_preview_cannot_be_confirmed(conn, config):
 
 def test_dm_cancel_marks_preview_final_and_old_confirm_cannot_send(conn, config):
     channel = connected_channel(conn)
-    now = "2026-11-18T12:00:00+00:00"
+    now = datetime.now(timezone.utc).isoformat()
     outbox = conn.execute(
         """INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,
              message_text,status,created_at,updated_at)
