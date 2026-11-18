@@ -119,23 +119,25 @@ def process_control_update(conn, config, client, update: dict) -> bool:
             publication_id = int(raw_id)
             now = datetime.now(timezone.utc).isoformat()
             with conn:
-                row = conn.execute(
-                    """SELECT pub.id FROM publications pub
-                         JOIN channels c ON c.id = pub.channel_id
-                        WHERE pub.id = ? AND pub.status = 'scheduled' AND pub.is_held = 0
-                          AND c.platform = 'instagram' AND c.is_active = 1
-                          AND c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id) <> ''
-                          AND c.access_token IS NOT NULL AND TRIM(c.access_token) <> ''""",
-                    (publication_id,),
-                ).fetchone()
-                if row is None:
+                updated = conn.execute(
+                    """UPDATE publications
+                          SET scheduled_at = ?, next_retry_at = NULL, updated_at = ?
+                        WHERE id = ? AND status = 'scheduled' AND is_held = 0
+                          AND EXISTS (
+                              SELECT 1 FROM channels c
+                               WHERE c.id = publications.channel_id
+                                 AND c.platform = 'instagram' AND c.is_active = 1
+                                 AND c.remote_account_id IS NOT NULL
+                                 AND TRIM(c.remote_account_id) <> ''
+                                 AND c.access_token IS NOT NULL
+                                 AND TRIM(c.access_token) <> ''
+                          )""",
+                    (now, now, publication_id),
+                )
+                if updated.rowcount != 1:
                     _send(client, token, chat_id,
                           "لم يتم تقديم المنشور: لم يعد مجدولاً أو أن قناة Instagram غير متصلة.", _menu())
                     return True
-                conn.execute(
-                    "UPDATE publications SET scheduled_at=?, next_retry_at=NULL, updated_at=? WHERE id=? AND status='scheduled' AND is_held=0",
-                    (now, now, publication_id),
-                )
                 if update_id is not None:
                     conn.execute(
                         """INSERT OR IGNORE INTO telegram_ingest_updates
