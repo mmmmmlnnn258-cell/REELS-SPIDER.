@@ -504,3 +504,56 @@ def test_schedule_menu_button_cancels_pending_date_entry(conn, config):
         callback(update_id=1115, data="bs:schedule"),
     )
     assert conn.execute("SELECT COUNT(*) FROM telegram_schedule_sessions").fetchone()[0] == 0
+
+
+
+def test_main_menu_exposes_separate_global_publishing_control(conn, config):
+    client = FakeTelegram()
+    assert process_control_update(conn, cfg(config), client, callback(data="bs:menu"))
+    buttons = [button for row in client.messages[0][2]["inline_keyboard"] for button in row]
+    assert any(button["callback_data"] == "bs:publishing_control" for button in buttons)
+
+
+def test_global_publishing_control_shows_pause_action_when_active(conn, config):
+    client = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), client, callback(update_id=1200, data="bs:publishing_control")
+    )
+    body, keyboard = client.messages[0][1], client.messages[0][2]["inline_keyboard"]
+    assert "الحالة العامة: نشط" in body
+    assert any(button["callback_data"] == "bs:publishing:pause"
+               for row in keyboard for button in row)
+
+
+def test_global_pause_and_resume_are_persisted_and_idempotent(conn, config):
+    client = FakeTelegram()
+    pause = callback(update_id=1201, data="bs:publishing:pause")
+    assert process_control_update(conn, cfg(config), client, pause)
+    assert conn.execute(
+        "SELECT is_paused, updated_by_chat_id FROM publishing_control WHERE id=1"
+    ).fetchone()["is_paused"] == 1
+    first_message_count = len(client.messages)
+    assert process_control_update(conn, cfg(config), client, pause)
+    assert len(client.messages) == first_message_count
+    assert "تم إيقاف" in client.messages[0][1]
+
+    assert process_control_update(
+        conn, cfg(config), client, callback(update_id=1202, data="bs:publishing:resume")
+    )
+    assert conn.execute(
+        "SELECT is_paused FROM publishing_control WHERE id=1"
+    ).fetchone()[0] == 0
+    assert "تم استئناف" in client.messages[-1][1]
+
+
+def test_global_publishing_controls_reject_unauthorized_user(conn, config):
+    client = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), client,
+        callback(update_id=1203, chat_id=7441755677, sender_id=999,
+                 data="bs:publishing:pause"),
+    )
+    assert conn.execute(
+        "SELECT is_paused FROM publishing_control WHERE id=1"
+    ).fetchone()[0] == 0
+    assert client.messages == []
