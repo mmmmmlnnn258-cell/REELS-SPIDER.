@@ -208,8 +208,11 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
     for channel in channels:
         try:
             graph = graph_client_for("instagram")
-            rows = graph.get_instagram_conversations(str(channel["remote_account_id"]),
-                                                       channel["access_token"], limit=15)
+            messaging_id = (str(channel["remote_account_id"]) if "graph.instagram.com" in getattr(graph, "base", "") else str(channel["linked_page_id"] or ""))
+            if not messaging_id:
+                lines.append(f"تعذر قراءة {channel['account_name']}: يلزم ربط صفحة Facebook لهذه القناة.")
+                continue
+            rows = graph.get_instagram_conversations(messaging_id, channel["access_token"], limit=15)
             lines.append(f"\n{channel['account_name']}: {len(rows)} محادثة")
             for conv in rows[:8]:
                 cid = str(conv.get("id") or "")
