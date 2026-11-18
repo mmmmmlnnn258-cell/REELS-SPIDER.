@@ -188,6 +188,22 @@ def test_instagram_unknown_expiry_renews_to_learn_the_date(conn, ig_login_config
     assert params["grant_type"] == "ig_refresh_token"
 
 
+def test_explicit_instagram_login_refresh_ignores_global_graph_base(conn, config):
+    cfg = dataclasses.replace(config, graph_base="https://graph.facebook.com")
+    cur = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, timezone, remote_account_id, access_token,
+            instagram_auth_method)
+           VALUES ('instagram','IG Login','UTC','ig-456','IGA_OLD','instagram_login')"""
+    )
+    conn.commit()
+    channel = db.get_channel(conn, cur.lastrowid)
+    session = FakeSession({"refresh_access_token": RENEWED})
+
+    assert check_channel(conn, cfg, channel, NOW, session=session) == "renewed"
+    assert session.calls[0][0] == "https://graph.instagram.com/refresh_access_token"
+
+
 def test_instagram_with_weeks_left_makes_no_call(conn, ig_login_config):
     ch = _channel(conn, platform="instagram", token="IGA_OLD",
                   expires_at=(NOW + timedelta(days=40)).isoformat())
