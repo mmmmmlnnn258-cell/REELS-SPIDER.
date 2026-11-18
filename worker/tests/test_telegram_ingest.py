@@ -36,14 +36,14 @@ def add_channel(conn, *, active=1, token="ig-token", remote_id="1784001"):
 
 
 def configured(config, **kwargs):
-    return replace(
-        config,
-        telegram_bot_token="bot-secret",
-        telegram_allowed_chat_ids="42",
-        telegram_default_instagram_channel_id=None,
-        telegram_max_file_bytes=1024 * 1024,
-        **kwargs,
-    )
+    values = {
+        "telegram_bot_token": "bot-secret",
+        "telegram_allowed_chat_ids": "42",
+        "telegram_default_instagram_channel_id": None,
+        "telegram_max_file_bytes": 1024 * 1024,
+    }
+    values.update(kwargs)
+    return replace(config, **values)
 
 
 def video_update(update_id=100, chat_id=42):
