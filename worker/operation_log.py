@@ -1,7 +1,7 @@
 """Durable operation history and best-effort Telegram notifications for BLACK SPIDER."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .redact import redact
 
@@ -247,8 +247,7 @@ def retry_pending_notifications(conn, config, *, logger=None, limit: int = 20):
     if not config.telegram_bot_token or not _allowed(config.telegram_allowed_chat_ids):
         return 0
     retry_before = (
-        datetime.now(timezone.utc) -
-        __import__("datetime").timedelta(seconds=NOTIFICATION_RETRY_SECONDS)
+        datetime.now(timezone.utc) - timedelta(seconds=NOTIFICATION_RETRY_SECONDS)
     ).isoformat()
     rows = conn.execute(
         """SELECT event.* FROM telegram_operation_log event
