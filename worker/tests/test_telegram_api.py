@@ -6,6 +6,8 @@ also return {"ok": false, ...} with an HTTP 200, so success must be judged on th
 field, not the status code.
 """
 
+import json
+
 import pytest
 
 from worker.telegram_api import TelegramAPIError, TelegramClient
