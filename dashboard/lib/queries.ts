@@ -165,6 +165,7 @@ export function connectInstagramChannel(input: {
   remoteAccountId: string;
   accessToken: string;
   tokenExpiresAt: string;
+  instagramAuthMethod: "instagram_login";
 }): "connected" | "channel_missing" | "already_linked" {
   const db = getDb();
   const tx = db.transaction(() => {
@@ -185,6 +186,7 @@ export function connectInstagramChannel(input: {
           SET remote_account_id = @remoteAccountId,
               access_token = @accessToken,
               token_expires_at = @tokenExpiresAt,
+              instagram_auth_method = @instagramAuthMethod,
               token_error = NULL,
               token_next_check_at = NULL,
               updated_at = @updatedAt
