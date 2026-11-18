@@ -651,14 +651,21 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 _send(client, token, chat_id, "معرّف الإرسال غير صالح.", _menu())
                 return True
             outbox_id = int(raw_id)
-            now = datetime.now(timezone.utc).isoformat()
+            now_dt = datetime.now(timezone.utc)
+            now = now_dt.isoformat()
+            cutoff = (now_dt - timedelta(minutes=20)).isoformat()
             with conn:
                 claim = conn.execute("""UPDATE telegram_dm_outbox SET status='sending',updated_at=?
-                    WHERE id=? AND chat_id=? AND status='pending'""", (now, outbox_id, chat_id))
+                    WHERE id=? AND chat_id=? AND status='pending' AND created_at>=?""",
+                    (now, outbox_id, chat_id, cutoff))
+                if claim.rowcount != 1:
+                    conn.execute("""UPDATE telegram_dm_outbox SET status='cancelled',updated_at=?
+                        WHERE id=? AND chat_id=? AND status='pending' AND created_at<?""",
+                        (now, outbox_id, chat_id, cutoff))
                 row = conn.execute("SELECT * FROM telegram_dm_outbox WHERE id=? AND chat_id=?",
                                    (outbox_id, chat_id)).fetchone()
             if claim.rowcount != 1 or row is None:
-                _send(client, token, chat_id, "هذا الرد سبق تأكيده أو لم يعد متاحاً؛ لن نكرر الإرسال.", _menu())
+                _send(client, token, chat_id, "انتهت صلاحية المعاينة أو سبق تأكيدها/إلغاؤها؛ افتح المحادثة وأنشئ معاينة جديدة.", _menu())
                 return True
             try:
                 channel = conn.execute("""SELECT remote_account_id,linked_page_id,access_token FROM channels
