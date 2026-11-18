@@ -317,7 +317,7 @@ def test_registry_mismatch_failure_is_recorded_and_notified(
     monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
     cfg = replace(config, telegram_bot_token="test-token",
                   telegram_allowed_chat_ids="7441755677")
-    pub = make_publication(platform="instagram", n_assets=1)
+    pub = make_publication(platform="instagram", n_assets=1, now=NOW)
 
     def client_for(_platform):
         raise UnknownPlatform("instagram")
@@ -360,7 +360,7 @@ def test_registry_mismatch_during_dry_run_does_not_fail_or_alert(
     monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
     cfg = replace(config, telegram_bot_token="test-token",
                   telegram_allowed_chat_ids="7441755677")
-    pub = make_publication(platform="instagram", n_assets=1)
+    pub = make_publication(platform="instagram", n_assets=1, now=NOW)
 
     def client_for(_platform):
         raise UnknownPlatform("instagram")
