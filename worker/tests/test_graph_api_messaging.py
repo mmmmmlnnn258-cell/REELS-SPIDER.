@@ -74,3 +74,20 @@ def test_instagram_direct_message_rejects_empty_recipient_or_text():
             pass
         else:
             raise AssertionError("empty recipient/message must be rejected before HTTP")
+
+
+def test_instagram_conversation_id_is_encoded_as_an_opaque_path_segment():
+    session = FakeSession()
+    session.responses = [
+        {"id": "t_opaque/id?cursor=1", "participants": {"data": []},
+         "messages": {"data": []}},
+    ]
+    graph = GraphClient("v25.0", session=session, base_url="https://graph.instagram.com")
+    conversation, messages = graph.get_instagram_conversation_messages(
+        "t_opaque/id?cursor=1", "access-token"
+    )
+    assert conversation["id"] == "t_opaque/id?cursor=1"
+    assert messages == []
+    assert session.get_calls[0][0] == (
+        "https://graph.instagram.com/v25.0/t_opaque%2Fid%3Fcursor%3D1"
+    )
