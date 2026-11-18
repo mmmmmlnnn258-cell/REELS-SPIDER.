@@ -197,7 +197,7 @@ def _comment_permission_hint(channel, graph) -> str:
 
 
 def _connected_ig_channels(conn):
-    return conn.execute("""SELECT id, account_name, remote_account_id, linked_page_id, access_token,
+    return conn.execute("""SELECT id, platform, account_name, remote_account_id, linked_page_id, access_token,
                instagram_auth_method
         FROM channels WHERE platform='instagram' AND is_active=1
         AND remote_account_id IS NOT NULL AND TRIM(remote_account_id)<>''
@@ -233,10 +233,12 @@ def _comment_rule_detail(conn, client, token, chat_id, rule_id):
 
 
 def _comment_live_list(conn, client, graph_client_for, token, chat_id, rule_id):
-    row = conn.execute("SELECT r.media_id,c.id,c.remote_account_id,c.linked_page_id,c.access_token,c.instagram_auth_method
+    row = conn.execute("""SELECT r.media_id,c.id,c.platform,c.remote_account_id,c.linked_page_id,
+               c.access_token,c.instagram_auth_method
         FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id
         WHERE r.id=? AND c.platform='instagram' AND c.is_active=1
-          AND c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL", (rule_id,)).fetchone()
+          AND c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL""",
+        (rule_id,)).fetchone()
     if row is None or graph_client_for is None:
         _send(client, token, chat_id, "القاعدة غير متاحة أو عميل Meta غير جاهز.", _menu())
         return
@@ -305,7 +307,7 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
 
 
 def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, conversation_id):
-    channel = conn.execute("""SELECT id,account_name,remote_account_id,linked_page_id,access_token,instagram_auth_method FROM channels
+    channel = conn.execute("""SELECT id,platform,account_name,remote_account_id,linked_page_id,access_token,instagram_auth_method FROM channels
         WHERE id=? AND platform='instagram' AND is_active=1 AND remote_account_id IS NOT NULL
         AND access_token IS NOT NULL""", (channel_id,)).fetchone()
     if channel is None or graph_client_for is None:
@@ -812,7 +814,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 _send(client, token, chat_id, "انتهت صلاحية المعاينة أو سبق تأكيدها/إلغاؤها؛ افتح المحادثة وأنشئ معاينة جديدة.", _menu())
                 return True
             try:
-                channel = conn.execute("""SELECT id,remote_account_id,linked_page_id,access_token,instagram_auth_method FROM channels
+                channel = conn.execute("""SELECT id,platform,remote_account_id,linked_page_id,access_token,instagram_auth_method FROM channels
                     WHERE id=? AND platform='instagram' AND is_active=1""", (row["channel_id"],)).fetchone()
                 if channel is None or graph_client_for is None:
                     raise RuntimeError("قناة Instagram غير متصلة أو عميل Meta غير متاح.")
