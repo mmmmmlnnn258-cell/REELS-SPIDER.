@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import signal
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -276,6 +277,20 @@ def run_forever(config: Config, client, logger, *, client_for=None) -> None:
     signal.signal(signal.SIGTERM, _request_stop)
     conn = db.connect(config.database_path)
     logger.info("Worker started. DB=%s poll=%ss", config.database_path, config.poll_interval)
+
+    # Telegram intake runs in its own thread/SQLite connection so a long Reel publish
+    # cannot pause incoming video polling. It is opt-in and fails closed without an
+    # explicit TELEGRAM_ALLOWED_CHAT_IDS allow-list.
+    telegram_stop = threading.Event()
+    from .telegram_ingest import run_forever as run_telegram_receiver
+    telegram_thread = threading.Thread(
+        target=run_telegram_receiver,
+        args=(config, logger, telegram_stop),
+        name="telegram-video-receiver",
+        daemon=True,
+    )
+    telegram_thread.start()
+
     # The first cycle of this process recovers claims abandoned by a previous one without
     # waiting out the lease — see run_once. Cleared after the first attempt whether or not
     # it raised: the recovery step runs before anything that can throw, so a cycle that
@@ -297,6 +312,8 @@ def run_forever(config: Config, client, logger, *, client_for=None) -> None:
                     break
                 time.sleep(1)
     finally:
+        telegram_stop.set()
+        telegram_thread.join(timeout=config.telegram_poll_timeout + 20)
         conn.close()
         logger.info("Worker stopped.")
 

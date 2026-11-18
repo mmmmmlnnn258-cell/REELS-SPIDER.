@@ -180,3 +180,49 @@ def test_non_json_response_raises_telegram_api_error_not_raw_json_decode_error()
     message = str(excinfo.value)
     assert TOKEN not in message
     assert "502" in message
+
+
+
+def test_get_updates_uses_offset_and_long_poll_timeout():
+    c = client([FakeResponse({"ok": True, "result": [{"update_id": 12}]})])
+    out = c.get_updates(TOKEN, offset=12, timeout=20)
+    _url, data, _files = c.session.posts[0]
+    assert _url.endswith("/getUpdates")
+    assert data["offset"] == 12
+    assert data["timeout"] == 20
+    assert out == [{"update_id": 12}]
+
+
+class FakeDownloadResponse:
+    def __init__(self, content=b"video", status_code=200, headers=None):
+        self.content = content
+        self.status_code = status_code
+        self.ok = 200 <= status_code < 300
+        self.headers = headers or {}
+        self.text = "download failed"
+    def iter_content(self, chunk_size=65536):
+        yield self.content
+
+
+class FakeDownloadSession:
+    def __init__(self, response):
+        self.response = response
+        self.urls = []
+    def get(self, url, timeout=None, stream=False):
+        self.urls.append(url)
+        assert stream is True
+        return self.response
+
+
+def test_download_file_returns_bytes_and_uses_file_endpoint():
+    session = FakeDownloadSession(FakeDownloadResponse(b"mp4-bytes", headers={"Content-Length": "9"}))
+    c = TelegramClient(session=session)
+    assert c.download_file(TOKEN, "videos/reel.mp4", 20) == b"mp4-bytes"
+    assert session.urls[0].endswith(f"/file/bot{TOKEN}/videos/reel.mp4")
+
+
+def test_download_file_enforces_declared_size_limit():
+    session = FakeDownloadSession(FakeDownloadResponse(b"123", headers={"Content-Length": "100"}))
+    c = TelegramClient(session=session)
+    with pytest.raises(TelegramAPIError, match="size limit"):
+        c.download_file(TOKEN, "videos/reel.mp4", 10)

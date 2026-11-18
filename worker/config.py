@@ -228,6 +228,14 @@ class Config:
     tod_afternoon: str = "13:00"
     tod_evening: str = "18:00"
 
+    # Telegram video intake is opt-in and fail-closed. The allow-list is mandatory.
+    telegram_bot_token: str = ""
+    telegram_allowed_chat_ids: str = ""
+    telegram_default_instagram_channel_id: int | None = None
+    telegram_poll_timeout: int = 20
+    # Telegram's hosted Bot API currently limits bot downloads to 20 MB.
+    telegram_max_file_bytes: int = 20 * 1024 * 1024
+
     @classmethod
     def from_env(cls) -> "Config":
         load_env()
@@ -316,4 +324,15 @@ class Config:
             tod_morning=os.environ.get("TOD_MORNING", "09:00"),
             tod_afternoon=os.environ.get("TOD_AFTERNOON", "13:00"),
             tod_evening=os.environ.get("TOD_EVENING", "18:00"),
+            telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
+            telegram_allowed_chat_ids=os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", ""),
+            telegram_default_instagram_channel_id=(
+                int(os.environ["TELEGRAM_DEFAULT_INSTAGRAM_CHANNEL_ID"])
+                if os.environ.get("TELEGRAM_DEFAULT_INSTAGRAM_CHANNEL_ID", "").strip()
+                else None
+            ),
+            telegram_poll_timeout=int(os.environ.get("TELEGRAM_POLL_TIMEOUT", "20")),
+            telegram_max_file_bytes=int(
+                os.environ.get("TELEGRAM_MAX_FILE_BYTES", str(20 * 1024 * 1024))
+            ),
         )

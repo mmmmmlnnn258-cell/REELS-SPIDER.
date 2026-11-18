@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/instagram-comment-dm
+      - feature/telegram-video-ingest
   pull_request:
     branches:
       - main
