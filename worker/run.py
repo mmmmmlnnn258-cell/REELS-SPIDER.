@@ -60,6 +60,11 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
     # (alive != publishing). The dashboard reads this to know a queued refresh will be picked up.
     db.write_heartbeat(conn, now.isoformat())
 
+    # Retry any durable Telegram alerts that failed to leave the previous cycle.
+    # Notification outages must never affect publication state or stop the worker.
+    from .operation_log import retry_pending_notifications
+    retry_pending_notifications(conn, config, logger=logger)
+
     # Recover anything a previous worker claimed and never finished, BEFORE the kill
     # switch can return early. This writes no posts — it only moves an abandoned row out
     # of 'publishing', where nothing would ever look at it again. Running it above the
@@ -78,15 +83,16 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
     # sweeping that one mid-send is how you publish twice.
     lease = 0 if recover_all_claims else config.publish_claim_lease_seconds
     stale = db.recover_stale_claims(conn, now.isoformat(), lease)
-    if stale and logger:
-        # WARNING, not info: each of these is a scheduled post that did not go out, and
-        # may or may not be live on the platform. It should never scroll past unnoticed.
+    if stale:
+        from .operation_log import record_recovered_publication
         for row in stale:
-            logger.warning(
-                "[publication %s] recovered from an abandoned publish and marked FAILED "
-                "— check channel %s on the platform before retrying; it may already be live.",
-                row["id"], row["channel_id"],
-            )
+            if logger:
+                logger.warning(
+                    "[publication %s] recovered from an abandoned publish and marked FAILED "
+                    "— check channel %s on the platform before retrying; it may already be live.",
+                    row["id"], row["channel_id"],
+                )
+            record_recovered_publication(conn, row, config, logger=logger, now=now)
 
     if kill_switch_active():
         if logger:
@@ -100,7 +106,12 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
 
     run_autofill(conn, config, now, logger=logger)
 
-    due = db.fetch_due_publications(conn, now.isoformat())
+    if db.is_publishing_paused(conn):
+        due = []
+        if logger:
+            logger.info("Global publishing pause is active — due queue left untouched.")
+    else:
+        due = db.fetch_due_publications(conn, now.isoformat())
     if logger and due:
         logger.info("%d due publication(s)%s", len(due), " [DRY-RUN]" if dry_run else "")
 
@@ -143,12 +154,17 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
             except Exception as exc:  # noqa: BLE001 — deliberately broad; never crash the daemon
                 if logger:
                     logger.error("publish endpoint unavailable: %s", exc)
+                from .operation_log import record_deferred_publication
                 for pub in due:
                     if pub["id"] in tunnel_needed_ids:
+                        error = redact(f"publish endpoint unavailable: {exc}")
                         db.update_publication(
                             conn, pub["id"],
-                            last_error=redact(f"publish endpoint unavailable: {exc}"),
+                            last_error=error,
                             updated_at=now.isoformat(),
+                        )
+                        record_deferred_publication(
+                            conn, int(pub["id"]), config, error, logger=logger, now=now,
                         )
                 due = [pub for pub in due if pub["id"] not in tunnel_needed_ids]
 
@@ -157,6 +173,10 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
             if kill_switch_active():
                 if logger:
                     logger.warning("KILL_SWITCH flipped mid-batch — stopping.")
+                break
+            if db.is_publishing_paused(conn):
+                if logger:
+                    logger.info("Global publishing pause activated mid-batch — stopping before next claim.")
                 break
             channel = db.get_channel(conn, pub["channel_id"])
             try:
@@ -179,21 +199,39 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
                     )
                     if logger:
                         logger.error("[pub %s] %s", pub["id"], error)
-                    db.update_publication(
-                        conn, pub["id"],
-                        status="failed", attempt_count=pub["attempt_count"] + 1,
-                        last_error=error, next_retry_at=None,
-                        updated_at=now.isoformat(),
-                    )
+                    if dry_run:
+                        from types import SimpleNamespace
+                        from .operation_log import record_publication_outcome
+                        record_publication_outcome(
+                            conn, int(pub["id"]),
+                            SimpleNamespace(result="failed", detail=error),
+                            config, dry_run=True, logger=logger, now=now,
+                        )
+                    else:
+                        db.update_publication(
+                            conn, pub["id"],
+                            status="failed", attempt_count=pub["attempt_count"] + 1,
+                            last_error=error, next_retry_at=None,
+                            updated_at=now.isoformat(),
+                        )
+                        from .operation_log import record_terminal_publication_failure
+                        record_terminal_publication_failure(
+                            conn, int(pub["id"]), config, error, logger=logger, now=now,
+                        )
                     processed += 1
                     continue
                 # No adapter for this platform at all. Hand it to publish_one anyway: it
                 # validates the platform and marks this ONE publication terminally
                 # failed, so the rest of the batch still goes out.
                 pub_client = client
-            publish_one(conn, pub, config, pub_client, dry_run=dry_run,
-                        asset_base_url=asset_base_url, now=now,
-                        logger=logger, sleep_fn=sleep_fn)
+            outcome = publish_one(conn, pub, config, pub_client, dry_run=dry_run,
+                                  asset_base_url=asset_base_url, now=now,
+                                  logger=logger, sleep_fn=sleep_fn)
+            from .operation_log import record_publication_outcome
+            record_publication_outcome(
+                conn, int(pub["id"]), outcome, config, dry_run=dry_run,
+                logger=logger, now=now,
+            )
             processed += 1
 
     # Re-attempt first comments a human explicitly asked to retry from the dashboard.
@@ -201,10 +239,11 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
     # inside the kill-switch guard above, since it posts to a live account.
     from .publisher import run_first_comment_retries
 
-    run_first_comment_retries(
-        conn, config, client, now, logger=logger, client_for=client_for,
-        dry_run=dry_run, sleep_fn=sleep_fn,
-    )
+    if not db.is_publishing_paused(conn):
+        run_first_comment_retries(
+            conn, config, client, now, logger=logger, client_for=client_for,
+            dry_run=dry_run, sleep_fn=sleep_fn,
+        )
 
     # Keep TikTok access tokens alive BEFORE the read-only jobs below use them. They run
     # on long throttles (avatars ~weekly, account stats daily) while a TikTok token lives
@@ -285,7 +324,7 @@ def run_forever(config: Config, client, logger, *, client_for=None) -> None:
     from .telegram_ingest import run_forever as run_telegram_receiver
     telegram_thread = threading.Thread(
         target=run_telegram_receiver,
-        args=(config, logger, telegram_stop),
+        args=(config, logger, telegram_stop, client_for),
         name="telegram-video-receiver",
         daemon=True,
     )

@@ -5,6 +5,7 @@ on:
     branches:
       - feature/instagram-comment-dm
       - feature/telegram-video-ingest
+      - feature/black-spider-full-control
   pull_request:
     branches:
       - main

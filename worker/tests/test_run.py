@@ -230,3 +230,151 @@ def test_run_once_defaults_to_the_full_lease(
 
     row = conn.execute("SELECT status FROM publications WHERE id=?", (pub_id,)).fetchone()
     assert row["status"] == "publishing"
+
+
+
+def test_global_pause_leaves_due_publications_queued_and_resume_processes_them(
+    conn, config, fake_client, make_publication, monkeypatch
+):
+    monkeypatch.setenv("KILL_SWITCH", "0")
+    monkeypatch.setenv("DRY_RUN", "1")
+    monkeypatch.setattr("worker.run.load_env", lambda override=False: None)
+    pub = make_publication(post_type="single", n_assets=1, now=NOW)
+
+    conn.execute(
+        "UPDATE publishing_control SET is_paused=1 WHERE id=1"
+    )
+    conn.commit()
+    assert run_once(conn, config, fake_client, now=NOW) == 0
+    row = conn.execute(
+        "SELECT status FROM publications WHERE id=?", (pub["id"],)
+    ).fetchone()
+    assert row["status"] == "scheduled"
+    assert fake_client.calls == []
+
+    conn.execute("UPDATE publishing_control SET is_paused=0 WHERE id=1")
+    conn.commit()
+    assert run_once(conn, config, fake_client, now=NOW) == 1
+    row = conn.execute(
+        "SELECT status, is_dry_run FROM publications WHERE id=?", (pub["id"],)
+    ).fetchone()
+    assert row["status"] == "posted"
+    assert row["is_dry_run"] == 1
+
+
+def test_global_pause_is_rechecked_before_each_publication_claim(
+    conn, config, fake_client, make_publication, monkeypatch
+):
+    monkeypatch.setenv("KILL_SWITCH", "0")
+    monkeypatch.setenv("DRY_RUN", "1")
+    monkeypatch.setattr("worker.run.load_env", lambda override=False: None)
+    first = make_publication(post_type="single", n_assets=1, now=NOW)
+    second = make_publication(post_type="single", n_assets=1, now=NOW)
+    original = __import__("worker.publisher", fromlist=["publish_one"]).publish_one
+    calls = []
+
+    def pause_after_first(*args, **kwargs):
+        calls.append(args[1]["id"])
+        result = original(*args, **kwargs)
+        if len(calls) == 1:
+            conn.execute("UPDATE publishing_control SET is_paused=1 WHERE id=1")
+            conn.commit()
+        return result
+
+    monkeypatch.setattr("worker.publisher.publish_one", pause_after_first)
+    assert run_once(conn, config, fake_client, now=NOW) == 1
+    states = {
+        row["id"]: row["status"] for row in conn.execute(
+            "SELECT id, status FROM publications WHERE id IN (?, ?)",
+            (first["id"], second["id"]),
+        )
+    }
+    assert states[first["id"]] == "posted"
+    assert states[second["id"]] == "scheduled"
+
+
+def test_registry_mismatch_failure_is_recorded_and_notified(
+    conn, config, fake_client, make_publication, monkeypatch
+):
+    from dataclasses import replace
+    from worker import operation_log, publisher
+    from worker.clients import UnknownPlatform
+
+    monkeypatch.setenv("KILL_SWITCH", "0")
+    monkeypatch.setenv("DRY_RUN", "0")
+    monkeypatch.setattr("worker.run.load_env", lambda override=False: None)
+    monkeypatch.delitem(__import__("worker.clients", fromlist=["_BASE_URLS"])._BASE_URLS, "instagram")
+
+    class FakeTelegram:
+        def __init__(self):
+            self.messages = []
+
+        def send_message(self, token, chat_id, message):
+            self.messages.append((chat_id, message))
+            return {"message_id": len(self.messages)}
+
+    telegram = FakeTelegram()
+    monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
+    cfg = replace(config, telegram_bot_token="test-token",
+                  telegram_allowed_chat_ids="7441755677")
+    pub = make_publication(platform="instagram", n_assets=1, now=NOW)
+
+    def client_for(_platform):
+        raise UnknownPlatform("instagram")
+
+    assert run_once(conn, cfg, fake_client, client_for=client_for, now=NOW) == 1
+    row = conn.execute(
+        "SELECT status,last_error FROM publications WHERE id=?", (pub["id"],)
+    ).fetchone()
+    assert row["status"] == "failed"
+    assert "no base URL" in row["last_error"]
+    assert len(telegram.messages) == 1
+    assert "فشل النشر نهائياً" in telegram.messages[0][1]
+    assert conn.execute(
+        "SELECT COUNT(*) FROM telegram_operation_log WHERE publication_id=? AND status='failed'",
+        (pub["id"],),
+    ).fetchone()[0] == 1
+
+
+def test_registry_mismatch_during_dry_run_does_not_fail_or_alert(
+    conn, config, fake_client, make_publication, monkeypatch
+):
+    from dataclasses import replace
+    from worker import operation_log, publisher
+    from worker.clients import UnknownPlatform
+
+    monkeypatch.setenv("KILL_SWITCH", "0")
+    monkeypatch.setenv("DRY_RUN", "1")
+    monkeypatch.setattr("worker.run.load_env", lambda override=False: None)
+    monkeypatch.delitem(__import__("worker.clients", fromlist=["_BASE_URLS"])._BASE_URLS, "instagram")
+
+    class FakeTelegram:
+        def __init__(self):
+            self.messages = []
+
+        def send_message(self, token, chat_id, message):
+            self.messages.append(message)
+            return {"message_id": len(self.messages)}
+
+    telegram = FakeTelegram()
+    monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
+    cfg = replace(config, telegram_bot_token="test-token",
+                  telegram_allowed_chat_ids="7441755677")
+    pub = make_publication(platform="instagram", n_assets=1, now=NOW)
+
+    def client_for(_platform):
+        raise UnknownPlatform("instagram")
+
+    assert run_once(conn, cfg, fake_client, client_for=client_for, now=NOW) == 1
+    row = conn.execute(
+        "SELECT status,attempt_count FROM publications WHERE id=?", (pub["id"],)
+    ).fetchone()
+    assert row["status"] == "scheduled"
+    assert row["attempt_count"] == 0
+    event = conn.execute(
+        "SELECT status,detail FROM telegram_operation_log WHERE publication_id=?",
+        (pub["id"],),
+    ).fetchone()
+    assert event["status"] == "dry_run"
+    assert "لم تتم محاولة النشر على Instagram" in event["detail"]
+    assert telegram.messages == []

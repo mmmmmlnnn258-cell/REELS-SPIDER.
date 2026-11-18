@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, "feature/telegram-main-control-bot"]
+    branches: [main, "feature/telegram-main-control-bot", "feature/black-spider-full-control"]
 
 jobs:
   worker-tests:

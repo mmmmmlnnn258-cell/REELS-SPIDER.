@@ -355,6 +355,45 @@ class GraphClient:
         items = data.get("data") or []
         return [item for item in items if isinstance(item, dict)], (data.get("paging") or {}).get("next")
 
+    def get_instagram_conversations(self, ig_user_id: str, token: str, *, limit: int = 20):
+        """Read Instagram Messaging conversations using the official Graph API."""
+        data = self._get(
+            f"{ig_user_id}/conversations",
+            {"platform": "instagram", "fields": "id,updated_time,participants",
+             "limit": min(max(int(limit), 1), 50), "access_token": token},
+        )
+        return [item for item in (data.get("data") or []) if isinstance(item, dict)]
+
+    def get_instagram_conversation_messages(self, conversation_id: str, token: str):
+        """Read the messages and participants for one Instagram conversation.
+
+        Meta documents conversation IDs as opaque strings; encode them as one path
+        segment instead of assuming they are numeric or treating them as URL syntax.
+        """
+        from urllib.parse import quote
+
+        conversation_id = str(conversation_id or "")
+        if not conversation_id or len(conversation_id) > 512:
+            raise ValueError("a valid Instagram conversation ID is required")
+        data = self._get(
+            quote(conversation_id, safe=""),
+            {"fields": "id,updated_time,participants,messages{id,created_time,from,to,message}",
+             "access_token": token},
+        )
+        messages = ((data.get("messages") or {}).get("data") or [])
+        return data, [item for item in messages if isinstance(item, dict)]
+
+    def send_instagram_direct_message(self, ig_user_id: str, recipient_id: str,
+                                      message: str, token: str) -> dict:
+        """Send one human-confirmed Instagram DM via Meta Send API."""
+        if not recipient_id or not message or not message.strip():
+            raise ValueError("recipient and non-empty message are required")
+        return self._post_json(
+            f"{ig_user_id}/messages",
+            {"recipient": {"id": recipient_id}, "message": {"text": message.strip()}},
+            token,
+        )
+
     def _post_json(self, path: str, payload: dict, token: str) -> dict:
         """POST a JSON body with a Bearer token, used by Instagram's Send API."""
         try:
