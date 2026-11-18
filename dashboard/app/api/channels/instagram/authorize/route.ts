@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getChannel } from "@/lib/queries";
-import { config, instagramCredentials } from "@/lib/config";
+import { instagramCredentials } from "@/lib/config";
 import {
   createInstagramOAuthState,
   instagramAuthorizeUrl,
@@ -42,16 +42,6 @@ export function GET(req: NextRequest) {
     return channelPage(
       req,
       "Meta Instagram Login credentials are missing. Configure META_APP_ID and INSTAGRAM_APP_SECRET on the server first.",
-    );
-  }
-
-  // Instagram Login issues graph.instagram.com tokens. The worker currently chooses its
-  // Instagram host from META_GRAPH_BASE, so do not connect a token the worker cannot use.
-  const graphBase = config.graphBase.replace(/\/+$/, "");
-  if (graphBase !== "https://graph.instagram.com") {
-    return channelPage(
-      req,
-      "Instagram Login is not enabled because META_GRAPH_BASE is an installation-wide setting currently pointing to Facebook Login. Changing it may break existing Instagram channels; no channel credentials were changed. Per-channel login support is required before this connection can proceed.",
     );
   }
 
