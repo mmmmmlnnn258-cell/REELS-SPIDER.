@@ -291,7 +291,8 @@ def test_repeated_recovery_after_a_new_attempt_is_logged_again(conn, config, mak
     ).fetchone()
     first = operation_log.record_recovered_publication(conn, row, config)
     conn.execute(
-        "UPDATE publications SET attempt_count=attempt_count+1 WHERE id=?", (pub["id"],)
+        "UPDATE publications SET attempt_count=attempt_count+1,updated_at='2026-11-18T18:00:00+00:00' WHERE id=?",
+        (pub["id"],),
     )
     conn.commit()
     row = conn.execute(
