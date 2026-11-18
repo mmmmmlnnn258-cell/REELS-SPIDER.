@@ -355,11 +355,11 @@ def test_one_failing_channel_does_not_stop_the_others(conn, config):
     good = _channel(conn, "instagram")
     bad = _channel(conn, "threads")
 
-    def client_for(platform):
+    def client_for(channel):
         client = FakeAccountClient(
             series={}, totals={LOCAL_TODAY: {"views": 1}},
         )
-        if platform == "threads":
+        if channel["platform"] == "threads":
             def boom(*a, **kw):
                 raise RuntimeError("bad token access_token=SECRET")
             client.get_threads_user_insights = boom
