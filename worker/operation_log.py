@@ -128,3 +128,25 @@ def record_recovered_publication(conn, publication, config, *, logger=None, now=
     )
     _notify_once(conn, event, config, logger=logger)
     return event
+
+
+def record_deferred_publication(conn, publication_id: int, config, detail: str, *,
+                                logger=None, now=None):
+    """Log a publication deferred before publish_one (for example, no public tunnel)."""
+    row = conn.execute(
+        """SELECT p.caption,c.account_name FROM publications pub
+             JOIN posts p ON p.id=pub.post_id JOIN channels c ON c.id=pub.channel_id
+            WHERE pub.id=?""", (publication_id,)
+    ).fetchone()
+    safe_detail = redact(str(detail or "تعذر تنفيذ المحاولة."))[:700]
+    event = _insert_event(
+        conn,
+        event_key=f"publication:{publication_id}:deferred:{safe_detail}",
+        event_type="نشر", status="retrying", publication_id=publication_id,
+        channel_name=row["account_name"] if row else None,
+        caption=row["caption"] if row else None,
+        detail=f"لم تبدأ عملية النشر؛ ستبقى في الطابور لإعادة المحاولة. {safe_detail}",
+        created_at=(now or datetime.now(timezone.utc)).isoformat(),
+    )
+    _notify_once(conn, event, config, logger=logger)
+    return event
