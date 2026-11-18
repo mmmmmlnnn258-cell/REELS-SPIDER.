@@ -180,3 +180,25 @@ def record_manual_dm_outcome(conn, outbox_id: int, *, status: str, detail: str, 
         detail=detail,
         created_at=(now or datetime.now(timezone.utc)).isoformat(),
     )
+
+
+def retry_pending_notifications(conn, config, *, logger=None, limit: int = 20):
+    """Retry durable alerts whose Telegram delivery was not confirmed previously."""
+    if not config.telegram_bot_token or not _allowed(config.telegram_allowed_chat_ids):
+        return 0
+    rows = conn.execute(
+        """SELECT * FROM telegram_operation_log
+            WHERE notified_at IS NULL AND status IN ('success','retrying','failed')
+            ORDER BY created_at ASC,id ASC LIMIT ?""",
+        (max(1, min(int(limit), 100)),),
+    ).fetchall()
+    delivered_before = sum(1 for row in rows if row["notified_at"])
+    for row in rows:
+        _notify_once(conn, row, config, logger=logger)
+    delivered_after = conn.execute(
+        """SELECT COUNT(*) FROM telegram_operation_log
+            WHERE id IN (%s) AND notified_at IS NOT NULL""" %
+        (",".join("?" for _ in rows) or "NULL"),
+        tuple(row["id"] for row in rows),
+    ).fetchone()[0] if rows else 0
+    return max(0, delivered_after - delivered_before)
