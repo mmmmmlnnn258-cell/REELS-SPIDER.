@@ -232,6 +232,25 @@ def test_dm_meta_failure_is_marked_unknown_and_not_retried(conn, config):
     assert graph.sent == []
 
 
+def test_dm_success_without_meta_message_id_is_not_reported_as_sent(conn, config):
+    channel = connected_channel(conn)
+    now = datetime.now(timezone.utc).isoformat()
+    outbox = conn.execute(
+        """INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,
+             message_text,status,created_at,updated_at)
+           VALUES('7441755677',?,'9001','person-77','hello','pending',?,?)""",
+        (channel, now, now),
+    ).lastrowid
+    conn.commit()
+    graph = FakeGraph()
+    graph.send_instagram_direct_message = lambda *args: {}
+    client = FakeTelegram()
+    process_control_update(conn, cfg(config), client, cb(209, f"bs:dm:send:{outbox}"), lambda _: graph)
+    assert conn.execute("SELECT status FROM telegram_dm_outbox WHERE id=?", (outbox,)).fetchone()[0] == "unknown"
+    assert "نتيجة الإرسال غير مؤكدة" in client.messages[-1][1]
+    assert "أرسلت الرد بنجاح" not in client.messages[-1][1]
+
+
 def test_dm_list_surfaces_meta_permission_requirements(conn, config):
     connected_channel(conn)
     client = FakeTelegram()
