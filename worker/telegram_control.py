@@ -160,6 +160,111 @@ def _schedule_detail(conn, client, token: str, chat_id: str, publication_id: int
     _send(client, token, chat_id, body, keyboard)
 
 
+
+def _connected_ig_channels(conn):
+    return conn.execute("""SELECT id, account_name, remote_account_id, access_token
+        FROM channels WHERE platform='instagram' AND is_active=1
+        AND remote_account_id IS NOT NULL AND TRIM(remote_account_id)<>''
+        AND access_token IS NOT NULL AND TRIM(access_token)<>'' ORDER BY id""").fetchall()
+
+
+def _comment_rule_detail(conn, client, token, chat_id, rule_id):
+    row = conn.execute("""SELECT r.*, c.account_name FROM instagram_comment_rules r
+        JOIN channels c ON c.id=r.channel_id WHERE r.id=? AND c.platform='instagram'
+        AND c.is_active=1 AND c.remote_account_id IS NOT NULL
+        AND c.access_token IS NOT NULL""", (rule_id,)).fetchone()
+    if row is None:
+        _send(client, token, chat_id, "قاعدة التعليقات غير موجودة أو القناة غير متصلة.", _menu())
+        return
+    try:
+        keywords = json.loads(row["keywords_json"] or "[]")
+    except (TypeError, ValueError):
+        keywords = []
+    body = (f"💬 قاعدة التعليقات #{rule_id}\nالقناة: {row['account_name']}\n"
+            f"الفيديو: {row['media_id']}\nالحالة: {'مفعّلة' if row['enabled'] else 'متوقفة'}\n"
+            f"الكلمات: {', '.join(map(str, keywords)) or 'لا توجد'}\n"
+            f"الرد العام: {(row['public_reply_text'] or 'غير مضبوط')[:400]}\n"
+            f"الرد الخاص: {(row['private_reply_text'] or 'غير مضبوط')[:400]}\n"
+            f"آخر خطأ: {(row['last_error'] or 'لا يوجد')[:200]}")
+    _send(client, token, chat_id, body, {"inline_keyboard": [
+        [{"text": "✏️ تعديل الرد العام", "callback_data": f"bs:comment:edit:{rule_id}:public"}],
+        [{"text": "✏️ تعديل الرد الخاص", "callback_data": f"bs:comment:edit:{rule_id}:private"}],
+        [{"text": "📜 سجل الردود", "callback_data": f"bs:comment:logs:{rule_id}"}],
+        [{"text": f"{'⏸ إيقاف' if row['enabled'] else '▶️ تشغيل'} الأتمتة", "callback_data": f"bs:comment:{rule_id}"}],
+        [{"text": "↩ إدارة التعليقات", "callback_data": "bs:comments"}],
+    ]})
+
+
+def _dm_list(conn, client, graph_client_for, token, chat_id):
+    channels = _connected_ig_channels(conn)
+    if not channels:
+        _send(client, token, chat_id, "لا توجد قناة Instagram متصلة ونشطة.", _menu())
+        return
+    if graph_client_for is None:
+        _send(client, token, chat_id, "خدمة Meta غير متاحة حالياً.", _menu())
+        return
+    lines = ["✉️ محادثات Instagram الخاصة:"]
+    keyboard = []
+    for channel in channels:
+        try:
+            graph = graph_client_for("instagram")
+            rows = graph.get_instagram_conversations(str(channel["remote_account_id"]),
+                                                       channel["access_token"], limit=15)
+            lines.append(f"\n{channel['account_name']}: {len(rows)} محادثة")
+            for conv in rows[:8]:
+                cid = str(conv.get("id") or "")
+                if not cid.isdigit():
+                    continue
+                people = (conv.get("participants") or {}).get("data") or []
+                peer = next((p for p in people if str(p.get("id") or "") != str(channel["remote_account_id"])), {})
+                username = peer.get("username") or "مستخدم"
+                lines.append(f"• {username} · {conv.get('updated_time') or ''}")
+                keyboard.append([{"text": f"فتح {username[:18]} / قناة {channel['id']}",
+                                  "callback_data": f"bs:dm:view:{channel['id']}:{cid}"}])
+        except Exception as exc:
+            from .redact import redact
+            lines.append(f"تعذر جلب الرسائل: {redact(str(exc))[:220]}")
+    keyboard.append([{"text": "↩ القائمة", "callback_data": "bs:menu"}])
+    _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard": keyboard})
+
+
+def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, conversation_id):
+    channel = conn.execute("""SELECT id,account_name,remote_account_id,access_token FROM channels
+        WHERE id=? AND platform='instagram' AND is_active=1 AND remote_account_id IS NOT NULL
+        AND access_token IS NOT NULL""", (channel_id,)).fetchone()
+    if channel is None or graph_client_for is None:
+        _send(client, token, chat_id, "القناة غير متصلة أو صلاحية Meta غير متاحة.", _menu())
+        return
+    try:
+        graph = graph_client_for("instagram")
+        conversation, messages = graph.get_instagram_conversation_messages(conversation_id, channel["access_token"])
+        people = (conversation.get("participants") or {}).get("data") or []
+        peer = next((p for p in people if str(p.get("id") or "") != str(channel["remote_account_id"])), {})
+        recipient = str(peer.get("id") or "")
+        if not recipient:
+            _send(client, token, chat_id, "تعذر تحديد مستلم المحادثة؛ لم يتم تجهيز إرسال.", _menu())
+            return
+        lines = [f"✉️ {peer.get('username') or recipient} · {channel['account_name']}"]
+        for msg in messages[-10:]:
+            sender = msg.get("from") or {}
+            who = "حسابك" if str(sender.get("id") or "") == str(channel["remote_account_id"]) else (sender.get("username") or "العميل")
+            lines.append(f"\n{who}: {str(msg.get('message') or '[مرفق أو رسالة بلا نص]')[:650]}")
+        with conn:
+            conn.execute("""INSERT INTO telegram_dm_reply_sessions
+                (chat_id,channel_id,conversation_id,recipient_id,created_at) VALUES(?,?,?,?,?)
+                ON CONFLICT(chat_id) DO UPDATE SET channel_id=excluded.channel_id,
+                conversation_id=excluded.conversation_id,recipient_id=excluded.recipient_id,
+                created_at=excluded.created_at""",
+                (chat_id, channel_id, conversation_id, recipient, datetime.now(timezone.utc).isoformat()))
+        _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard": [
+            [{"text": "✍️ كتابة رد يدوي", "callback_data": "bs:dm:compose"}],
+            [{"text": "↩ صندوق الرسائل", "callback_data": "bs:dms"}],
+        ]})
+    except Exception as exc:
+        from .redact import redact
+        _send(client, token, chat_id, f"تعذر فتح المحادثة: {redact(str(exc))[:350]}\nقد تحتاج صلاحيات instagram_manage_messages وinstagram_basic ومراجعة Meta.", _menu())
+
+
 def process_control_update(conn, config, client, update: dict, graph_client_for=None) -> bool:
     """Handle /start, /menu and callback_query. Returns True when consumed.
 
