@@ -31,6 +31,7 @@ test("authorize URL uses Instagram Business Login and current permission names",
     "instagram_business_basic",
     "instagram_business_content_publish",
     "instagram_business_manage_comments",
+    "instagram_business_manage_insights",
     "instagram_business_manage_messages",
   ]);
   assert.equal(url.searchParams.get("scope"), INSTAGRAM_SCOPES.join(","));
