@@ -200,14 +200,17 @@ class FakeDownloadResponse:
         self.ok = 200 <= status_code < 300
         self.headers = headers or {}
         self.text = "download failed"
+    def iter_content(self, chunk_size=65536):
+        yield self.content
 
 
 class FakeDownloadSession:
     def __init__(self, response):
         self.response = response
         self.urls = []
-    def get(self, url, timeout=None):
+    def get(self, url, timeout=None, stream=False):
         self.urls.append(url)
+        assert stream is True
         return self.response
 
 
