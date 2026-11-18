@@ -155,6 +155,49 @@ export function upsertOAuthChannel(input: CreateChannelInput): {
   return { id: createChannel(input), created: true };
 }
 
+/**
+ * Atomically attach a verified Instagram Login credential to the selected existing
+ * channel. The duplicate check and update share one SQLite transaction, so two OAuth
+ * callbacks cannot race and attach the same Instagram account to different channel rows.
+ */
+export function connectInstagramChannel(input: {
+  channelId: number;
+  remoteAccountId: string;
+  accessToken: string;
+  tokenExpiresAt: string;
+}): "connected" | "channel_missing" | "already_linked" {
+  const db = getDb();
+  const tx = db.transaction(() => {
+    const target = db
+      .prepare("SELECT id FROM channels WHERE id = ? AND platform = 'instagram'")
+      .get(input.channelId) as { id: number } | undefined;
+    if (!target) return "channel_missing" as const;
+
+    const duplicate = db
+      .prepare(
+        "SELECT id FROM channels WHERE platform = 'instagram' AND remote_account_id = ? AND id <> ?",
+      )
+      .get(input.remoteAccountId, input.channelId) as { id: number } | undefined;
+    if (duplicate) return "already_linked" as const;
+
+    db.prepare(
+      `UPDATE channels
+          SET remote_account_id = @remoteAccountId,
+              access_token = @accessToken,
+              token_expires_at = @tokenExpiresAt,
+              token_error = NULL,
+              token_next_check_at = NULL,
+              updated_at = @updatedAt
+        WHERE id = @channelId AND platform = 'instagram'`,
+    ).run({
+      ...input,
+      updatedAt: nowIso(),
+    });
+    return "connected" as const;
+  });
+  return tx();
+}
+
 export function updateChannel(
   id: number,
   fields: Partial<{
