@@ -77,3 +77,41 @@ test("generic channel routes cannot select a non-legacy Instagram auth method", 
     false,
   );
 });
+
+
+test("generic PATCH cannot replace either half of verified Instagram Login credentials", async () => {
+  const { q, PATCH } = await setup();
+  const channelId = q.createChannel({
+    platform: "instagram",
+    account_name: "Verified Instagram Login channel",
+    timezone: "UTC",
+    remote_account_id: "verified-account-id",
+    access_token: "verified-long-lived-token",
+    instagram_auth_method: "instagram_login",
+  });
+
+  for (const payload of [
+    { remote_account_id: "attacker-selected-account-id" },
+    { access_token: "attacker-selected-token" },
+    {
+      remote_account_id: "attacker-selected-account-id",
+      access_token: "attacker-selected-token",
+    },
+  ]) {
+    const response = await PATCH(
+      new NextRequest(`https://scheduler.example.test/api/channels/${channelId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+      { params: Promise.resolve({ id: String(channelId) }) },
+    );
+
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /only be changed.*Instagram OAuth/i);
+    const unchanged = q.getChannel(channelId)!;
+    assert.equal(unchanged.instagram_auth_method, "instagram_login");
+    assert.equal(unchanged.remote_account_id, "verified-account-id");
+    assert.equal(unchanged.access_token, "verified-long-lived-token");
+  }
+});
