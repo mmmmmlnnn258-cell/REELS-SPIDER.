@@ -48,18 +48,20 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
-  const instagram_auth_method =
-    platform === "instagram" ? body.instagram_auth_method ?? "legacy" : "legacy";
+  // Non-legacy Instagram auth methods require credentials verified by OAuth.
+  // New channels start as legacy; the Instagram callback is the only path that may
+  // atomically attach an Instagram Login token and switch the method.
   if (
-    instagram_auth_method !== "legacy" &&
-    instagram_auth_method !== "facebook_login" &&
-    instagram_auth_method !== "instagram_login"
+    platform === "instagram" &&
+    body.instagram_auth_method !== undefined &&
+    body.instagram_auth_method !== "legacy"
   ) {
     return NextResponse.json(
-      { error: "instagram_auth_method must be legacy, facebook_login, or instagram_login." },
+      { error: "Instagram login method can only be selected by completing Instagram OAuth." },
       { status: 400 }
     );
   }
+  const instagram_auth_method = "legacy";
   const id = createChannel({
     platform,
     account_name,
