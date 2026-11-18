@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectInstagramChannel, getChannel } from "@/lib/queries";
-import { config, instagramCredentials } from "@/lib/config";
-import { INSTAGRAM_GRAPH_BASE, instagramCallbackUri } from "@/lib/instagram-oauth";
+import { config, instagramCredentials, instagramRedirectUri } from "@/lib/config";
+import { INSTAGRAM_GRAPH_BASE } from "@/lib/instagram-oauth";
 
 export const runtime = "nodejs";
 
@@ -18,8 +18,8 @@ type MetaPayload = {
   error?: unknown;
 };
 
-function back(req: NextRequest, params: Record<string, string>) {
-  const url = new URL("/channels", req.nextUrl.origin);
+function back(redirectUri: string, params: Record<string, string>) {
+  const url = new URL("/channels", new URL(redirectUri).origin);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   const response = NextResponse.redirect(url);
   response.headers.set("Cache-Control", "no-store");
@@ -43,6 +43,13 @@ async function readJson(response: Response): Promise<MetaPayload | null> {
  * The token is stored only after identity and target-channel checks pass.
  */
 export async function GET(req: NextRequest) {
+  const redirectUri = instagramRedirectUri();
+  if (!redirectUri) {
+    return NextResponse.json(
+      { error: "Instagram OAuth callback URL is not configured on the server." },
+      { status: 503 },
+    );
+  }
   const code = req.nextUrl.searchParams.get("code");
   const state = req.nextUrl.searchParams.get("state");
   const denied = req.nextUrl.searchParams.get("error");
@@ -50,7 +57,7 @@ export async function GET(req: NextRequest) {
   const targetId = Number(req.cookies.get(CHANNEL_COOKIE)?.value);
 
   if (denied) {
-    return back(req, {
+    return back(redirectUri, {
       instagram_error: "Instagram authorization was declined or canceled. No channel credentials were changed.",
     });
   }
@@ -63,26 +70,25 @@ export async function GET(req: NextRequest) {
     !Number.isSafeInteger(targetId) ||
     targetId <= 0
   ) {
-    return back(req, {
+    return back(redirectUri, {
       instagram_error: "The Instagram sign-in session expired or did not match this browser. Try again.",
     });
   }
 
   const target = getChannel(targetId);
   if (!target || target.platform !== "instagram") {
-    return back(req, {
+    return back(redirectUri, {
       instagram_error: "The selected Instagram channel no longer exists. No credentials were changed.",
     });
   }
 
   const { clientId, clientSecret } = instagramCredentials();
   if (!clientId || !clientSecret) {
-    return back(req, {
+    return back(redirectUri, {
       instagram_error: "Instagram OAuth credentials are not configured on the server.",
     });
   }
 
-  const redirectUri = instagramCallbackUri(req.nextUrl.origin);
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
 
   try {
@@ -103,7 +109,7 @@ export async function GET(req: NextRequest) {
     });
     const shortToken = await readJson(shortResponse);
     if (!shortResponse.ok || !shortToken?.access_token) {
-      return back(req, {
+      return back(redirectUri, {
         instagram_error: "Meta could not exchange the Instagram authorization code. Check the registered callback URL and app settings, then try again.",
       });
     }
@@ -121,7 +127,7 @@ export async function GET(req: NextRequest) {
     });
     const longToken = await readJson(longResponse);
     if (!longResponse.ok || !longToken?.access_token) {
-      return back(req, {
+      return back(redirectUri, {
         instagram_error: "Meta did not issue a long-lived Instagram token. No channel credentials were changed.",
       });
     }
@@ -140,14 +146,14 @@ export async function GET(req: NextRequest) {
     const identity = await readJson(identityResponse);
     const remoteAccountId = identity?.user_id ? String(identity.user_id) : "";
     if (!identityResponse.ok || !remoteAccountId || !identity?.username) {
-      return back(req, {
+      return back(redirectUri, {
         instagram_error: "The Instagram token was issued, but Meta could not verify the professional account identity. No channel credentials were changed.",
       });
     }
 
     const expiresIn = Number(longToken.expires_in);
     if (!Number.isFinite(expiresIn) || expiresIn <= 0) {
-      return back(req, {
+      return back(redirectUri, {
         instagram_error: "Meta returned an invalid token expiry. No channel credentials were changed.",
       });
     }
@@ -162,23 +168,23 @@ export async function GET(req: NextRequest) {
       instagramAuthMethod: "instagram_login",
     });
     if (linked === "already_linked") {
-      return back(req, {
+      return back(redirectUri, {
         instagram_error: "This Instagram account is already linked to another channel. No channel credentials were changed.",
       });
     }
     if (linked !== "connected") {
-      return back(req, {
+      return back(redirectUri, {
         instagram_error: "The selected Instagram channel no longer exists. No credentials were changed.",
       });
     }
 
-    return back(req, {
+    return back(redirectUri, {
       instagram_connected: String(targetId),
       instagram_username: identity.username,
     });
   } catch {
     // Never echo fetch errors: request URLs/bodies may contain OAuth credentials.
-    return back(req, {
+    return back(redirectUri, {
       instagram_error: "Could not safely complete the connection with Meta. No channel credentials were changed.",
     });
   }
