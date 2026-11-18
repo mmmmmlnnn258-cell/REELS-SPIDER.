@@ -85,6 +85,45 @@ class TelegramClient:
     def send_message(self, token: str, chat_id: str, text: str) -> dict:
         return self._call(token, "sendMessage", {"chat_id": chat_id, "text": text})
 
+    def get_updates(self, token: str, offset: int | None = None, timeout: int = 20) -> list[dict]:
+        """Long-poll incoming updates; HTTP timeout exceeds Telegram's poll timeout."""
+        data = {"timeout": int(timeout), "allowed_updates": json.dumps(["message", "channel_post"])}
+        if offset is not None:
+            data["offset"] = int(offset)
+        return self._call(token, "getUpdates", data, request_timeout=int(timeout) + 15) or []
+
+    def get_file(self, token: str, file_id: str) -> dict:
+        """Resolve a Telegram file_id to its downloadable file_path."""
+        return self._call(token, "getFile", {"file_id": file_id})
+
+    def download_file(self, token: str, file_path: str, max_bytes: int) -> bytes:
+        """Download a Bot API file with a strict size ceiling and token-safe errors."""
+        from urllib.parse import quote
+
+        relative = quote(file_path.lstrip("/"), safe="/")
+        url = f"{self.base_url}/file/bot{token}/{relative}"
+        try:
+            response = self.session.get(url, timeout=self.timeout)
+        except requests.RequestException as exc:
+            raise TelegramAPIError(
+                f"GET {redact(url)} -> request failed: {redact(str(exc))}"
+            ) from None
+        if not response.ok:
+            raise TelegramAPIError(
+                f"GET {redact(url)} -> {response.status_code}: {redact(response.text)[:200]}"
+            )
+        declared = response.headers.get("Content-Length")
+        if declared:
+            try:
+                if int(declared) > max_bytes:
+                    raise TelegramAPIError("Telegram file exceeds the configured size limit.")
+            except ValueError:
+                pass
+        content = response.content
+        if len(content) > max_bytes:
+            raise TelegramAPIError("Telegram file exceeds the configured size limit.")
+        return content
+
     def send_photo(
         self,
         token: str,
