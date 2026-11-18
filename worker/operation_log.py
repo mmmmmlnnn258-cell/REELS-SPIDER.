@@ -112,7 +112,7 @@ def _notify_once(conn, row, config, logger=None):
                                row["id"], chat_id, redact(str(exc))[:300])
     remaining = conn.execute(
         """SELECT COUNT(*) FROM telegram_operation_notifications
-            WHERE operation_id=? AND chat_id IN (%s)""" %
+            WHERE operation_id=? AND notified_at IS NOT NULL AND chat_id IN (%s)""" %
         ",".join("?" for _ in chats),
         (row["id"], *chats),
     ).fetchone()[0]
