@@ -100,7 +100,12 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
 
     run_autofill(conn, config, now, logger=logger)
 
-    due = db.fetch_due_publications(conn, now.isoformat())
+    if db.is_publishing_paused(conn):
+        due = []
+        if logger:
+            logger.info("Global publishing pause is active — due queue left untouched.")
+    else:
+        due = db.fetch_due_publications(conn, now.isoformat())
     if logger and due:
         logger.info("%d due publication(s)%s", len(due), " [DRY-RUN]" if dry_run else "")
 
@@ -158,6 +163,10 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
                 if logger:
                     logger.warning("KILL_SWITCH flipped mid-batch — stopping.")
                 break
+            if db.is_publishing_paused(conn):
+                if logger:
+                    logger.info("Global publishing pause activated mid-batch — stopping before next claim.")
+                break
             channel = db.get_channel(conn, pub["channel_id"])
             try:
                 pub_client = pick_client(channel["platform"]) if channel else client
@@ -201,10 +210,11 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
     # inside the kill-switch guard above, since it posts to a live account.
     from .publisher import run_first_comment_retries
 
-    run_first_comment_retries(
-        conn, config, client, now, logger=logger, client_for=client_for,
-        dry_run=dry_run, sleep_fn=sleep_fn,
-    )
+    if not db.is_publishing_paused(conn):
+        run_first_comment_retries(
+            conn, config, client, now, logger=logger, client_for=client_for,
+            dry_run=dry_run, sleep_fn=sleep_fn,
+        )
 
     # Keep TikTok access tokens alive BEFORE the read-only jobs below use them. They run
     # on long throttles (avatars ~weekly, account stats daily) while a TikTok token lives
