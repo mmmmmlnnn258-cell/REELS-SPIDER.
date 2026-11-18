@@ -1,0 +1,130 @@
+"""Durable operation history and best-effort Telegram notifications for BLACK SPIDER."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from .redact import redact
+
+
+def _allowed(raw: str) -> list[str]:
+    return list(dict.fromkeys(part.strip() for part in (raw or "").split(",") if part.strip()))[:20]
+
+
+def _telegram_client():
+    from .telegram_api import TelegramClient
+    return TelegramClient(timeout=15)
+
+
+def _insert_event(conn, *, event_key: str, event_type: str, status: str,
+                  publication_id=None, channel_name=None, caption=None, detail=None,
+                  created_at=None):
+    stamp = created_at or datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """INSERT OR IGNORE INTO telegram_operation_log
+           (event_key,event_type,status,publication_id,channel_name,caption,detail,created_at)
+           VALUES(?,?,?,?,?,?,?,?)""",
+        (event_key, event_type, status, publication_id, channel_name,
+         (caption or "")[:500], redact(str(detail or ""))[:1200], stamp),
+    )
+    conn.commit()
+    return conn.execute(
+        "SELECT * FROM telegram_operation_log WHERE event_key=?", (event_key,)
+    ).fetchone()
+
+
+def _notify_once(conn, row, config, logger=None):
+    if row is None or row["notified_at"] or not config.telegram_bot_token:
+        return
+    chats = _allowed(config.telegram_allowed_chat_ids)
+    if not chats:
+        return
+    status = row["status"]
+    if status == "dry_run":
+        return
+    icon = "✅" if status == "success" else ("⚠️" if status == "retrying" else "❌")
+    heading = {
+        "success": "تم النشر بنجاح",
+        "retrying": "تعذرت محاولة النشر — ستتم إعادة المحاولة",
+        "failed": "فشل النشر نهائياً",
+    }.get(status, "تحديث عملية")
+    caption = (row["caption"] or "بدون وصف").replace("\\n", " ")[:180]
+    message = (
+        f"{icon} BLACK SPIDER\n{heading}\n"
+        f"العملية: {row['event_type']} · #{row['publication_id'] or '—'}\n"
+        f"القناة: {row['channel_name'] or 'غير محددة'}\n"
+        f"المنشور: {caption}\n"
+        f"التفاصيل: {(row['detail'] or 'لا توجد تفاصيل إضافية')[:900]}"
+    )
+    try:
+        client = _telegram_client()
+        for chat_id in chats:
+            client.send_message(config.telegram_bot_token, chat_id, message[:3900])
+        with conn:
+            conn.execute(
+                "UPDATE telegram_operation_log SET notified_at=? WHERE id=? AND notified_at IS NULL",
+                (datetime.now(timezone.utc).isoformat(), row["id"]),
+            )
+    except Exception as exc:  # notification failure must never break the publishing worker
+        if logger:
+            logger.warning("BLACK SPIDER notification failed for operation %s: %s",
+                           row["id"], redact(str(exc))[:300])
+
+
+def record_publication_outcome(conn, publication_id: int, outcome, config, *,
+                               dry_run: bool, logger=None, now=None):
+    """Persist one outcome idempotently and notify for real success/retry/failure only."""
+    row = conn.execute(
+        """SELECT pub.id,pub.status,pub.attempt_count,pub.last_error,pub.remote_post_id,
+                  p.caption,c.account_name
+             FROM publications pub JOIN posts p ON p.id=pub.post_id
+             JOIN channels c ON c.id=pub.channel_id WHERE pub.id=?""",
+        (publication_id,),
+    ).fetchone()
+    if row is None or outcome.result == "skipped":
+        return None
+    if outcome.result == "posted":
+        status = "success"
+        detail = f"تم تأكيد النشر من المنصة. المعرّف: {row['remote_post_id'] or outcome.detail}"
+    elif outcome.result == "dry_run":
+        status = "dry_run"
+        detail = "محاكاة فقط؛ لم يتم إرسال أي شيء إلى Instagram."
+    elif outcome.result == "retry_scheduled":
+        status = "retrying"
+        detail = f"المحاولة {row['attempt_count']}؛ إعادة المحاولة مجدولة. {row['last_error'] or outcome.detail}"
+    elif outcome.result == "failed":
+        status = "failed"
+        detail = row["last_error"] or outcome.detail
+    elif outcome.result == "rate_limited":
+        status = "retrying"
+        detail = f"حد النشر لدى المنصة؛ أُجلت المحاولة. {outcome.detail}"
+    else:
+        status = "info"
+        detail = outcome.detail
+    event_key = f"publication:{publication_id}:{outcome.result}:{row['attempt_count']}"
+    event = _insert_event(
+        conn, event_key=event_key, event_type="نشر", status=status,
+        publication_id=publication_id, channel_name=row["account_name"],
+        caption=row["caption"], detail=detail,
+        created_at=(now or datetime.now(timezone.utc)).isoformat(),
+    )
+    _notify_once(conn, event, config, logger=logger)
+    return event
+
+
+def record_recovered_publication(conn, publication, config, *, logger=None, now=None):
+    publication_id = int(publication["id"])
+    row = conn.execute(
+        """SELECT p.caption,c.account_name FROM publications pub
+             JOIN posts p ON p.id=pub.post_id JOIN channels c ON c.id=pub.channel_id
+            WHERE pub.id=?""", (publication_id,)
+    ).fetchone()
+    event = _insert_event(
+        conn, event_key=f"publication:{publication_id}:recovered",
+        event_type="نشر", status="failed", publication_id=publication_id,
+        channel_name=row["account_name"] if row else None,
+        caption=row["caption"] if row else None,
+        detail="توقف العامل أثناء تنفيذ النشر؛ لا يمكن الجزم هل وصل المنشور للمنصة. تحقق من الحساب قبل إعادة المحاولة.",
+        created_at=(now or datetime.now(timezone.utc)).isoformat(),
+    )
+    _notify_once(conn, event, config, logger=logger)
+    return event
