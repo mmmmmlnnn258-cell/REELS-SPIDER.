@@ -48,6 +48,9 @@ export default async function ChannelsPage({
     tiktok_connected?: string;
     tiktok_reconnected?: string;
     tiktok_error?: string;
+    instagram_connected?: string;
+    instagram_username?: string;
+    instagram_error?: string;
   }>;
 }) {
   // The TikTok OAuth callback redirects here with an outcome. Without showing it, a failed
@@ -114,6 +117,19 @@ export default async function ChannelsPage({
         {params.tiktok_error ? (
           <div className="rounded-card border border-status-failed bg-surface-muted p-4 text-sm text-status-failed">
             {params.tiktok_error}
+          </div>
+        ) : null}
+        {params.instagram_connected ? (
+          <div className="rounded-card border border-status-posted bg-surface-muted p-4 text-sm text-ink-soft">
+            <span className="font-medium text-ink">Instagram connected.</span>{" "}
+            {params.instagram_username
+              ? `@\${params.instagram_username} was linked to channel #\${params.instagram_connected}.`
+              : `Channel #\${params.instagram_connected} was linked successfully.`}
+          </div>
+        ) : null}
+        {params.instagram_error ? (
+          <div className="rounded-card border border-status-failed bg-surface-muted p-4 text-sm text-status-failed">
+            {params.instagram_error}
           </div>
         ) : null}
         <ChannelForm
@@ -242,6 +258,31 @@ export default async function ChannelsPage({
                     channel needs re-authorizing when its yearly refresh token expires or
                     when a new scope is added, and routing that through "Add channel"
                     both hides it and implies it would create a duplicate. */}
+                {c.platform === "instagram" ? (
+                  <div className="mt-3 rounded-lg border border-border bg-surface-sunken/40 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-ink-soft">Instagram connection</p>
+                        <p className="mt-0.5 text-[11px] text-muted">
+                          {c.access_token && c.remote_account_id
+                            ? "This channel is linked. Reconnect only if its access needs refreshing."
+                            : "Connect this existing channel securely with Instagram. Its name, timezone, queue and history will be kept."}
+                        </p>
+                        {params.instagram_connected === String(c.id) ? (
+                          <p className="mt-1 text-[11px] font-medium text-status-posted">
+                            Connected{params.instagram_username ? ` as @\${params.instagram_username}` : ""}.
+                          </p>
+                        ) : null}
+                      </div>
+                      <a
+                        href={`/api/channels/instagram/authorize?channel_id=\${c.id}`}
+                        className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink hover:bg-surface"
+                      >
+                        {c.access_token && c.remote_account_id ? "Reconnect Instagram" : "ربط Instagram"}
+                      </a>
+                    </div>
+                  </div>
+                ) : null}
                 {oauthConnectPath(c.platform) ? (
                   <div className="mt-3 rounded-lg border border-border bg-surface-sunken/40 p-3">
                     <div className="flex items-center justify-between gap-3">
