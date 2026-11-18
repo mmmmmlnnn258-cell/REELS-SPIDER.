@@ -17,7 +17,8 @@ def _menu() -> dict:
         [{"text": "📅 إدارة الجدولة", "callback_data": "bs:schedule"}],
         [{"text": "📊 حالة النظام", "callback_data": "bs:status"},
          {"text": "🗓 المنشورات القادمة", "callback_data": "bs:posts"}],
-        [{"text": "💬 أتمتة التعليقات", "callback_data": "bs:comments"}],
+        [{"text": "💬 إدارة التعليقات", "callback_data": "bs:comments"},
+         {"text": "✉️ الرسائل الخاصة", "callback_data": "bs:dms"}],
         [{"text": "⏯ إيقاف / استئناف النشر", "callback_data": "bs:publishing_control"}],
     ]}
 
