@@ -334,3 +334,47 @@ def test_registry_mismatch_failure_is_recorded_and_notified(
         "SELECT COUNT(*) FROM telegram_operation_log WHERE publication_id=? AND status='failed'",
         (pub["id"],),
     ).fetchone()[0] == 1
+
+
+def test_registry_mismatch_during_dry_run_does_not_fail_or_alert(
+    conn, config, fake_client, make_publication, monkeypatch
+):
+    from dataclasses import replace
+    from worker import operation_log, publisher
+    from worker.clients import UnknownPlatform
+
+    monkeypatch.setenv("KILL_SWITCH", "0")
+    monkeypatch.setenv("DRY_RUN", "1")
+    monkeypatch.setattr("worker.run.load_env", lambda override=False: None)
+    monkeypatch.setitem(publisher._PUBLISHERS, "mystery-platform", object())
+
+    class FakeTelegram:
+        def __init__(self):
+            self.messages = []
+
+        def send_message(self, token, chat_id, message):
+            self.messages.append(message)
+            return {"message_id": len(self.messages)}
+
+    telegram = FakeTelegram()
+    monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
+    cfg = replace(config, telegram_bot_token="test-token",
+                  telegram_allowed_chat_ids="7441755677")
+    pub = make_publication(platform="mystery-platform", n_assets=1)
+
+    def client_for(_platform):
+        raise UnknownPlatform("mystery-platform")
+
+    assert run_once(conn, cfg, fake_client, client_for=client_for, now=NOW) == 1
+    row = conn.execute(
+        "SELECT status,attempt_count FROM publications WHERE id=?", (pub["id"],)
+    ).fetchone()
+    assert row["status"] == "scheduled"
+    assert row["attempt_count"] == 0
+    event = conn.execute(
+        "SELECT status,detail FROM telegram_operation_log WHERE publication_id=?",
+        (pub["id"],),
+    ).fetchone()
+    assert event["status"] == "dry_run"
+    assert "لم تتم محاولة النشر على Instagram" in event["detail"]
+    assert telegram.messages == []
