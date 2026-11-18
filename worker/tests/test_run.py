@@ -230,3 +230,64 @@ def test_run_once_defaults_to_the_full_lease(
 
     row = conn.execute("SELECT status FROM publications WHERE id=?", (pub_id,)).fetchone()
     assert row["status"] == "publishing"
+
+
+
+def test_global_pause_leaves_due_publications_queued_and_resume_processes_them(
+    conn, config, fake_client, make_publication, monkeypatch
+):
+    monkeypatch.setenv("KILL_SWITCH", "0")
+    monkeypatch.setenv("DRY_RUN", "1")
+    monkeypatch.setattr("worker.run.load_env", lambda override=False: None)
+    pub = make_publication(post_type="single", n_assets=1, now=NOW)
+
+    conn.execute(
+        "UPDATE publishing_control SET is_paused=1 WHERE id=1"
+    )
+    conn.commit()
+    assert run_once(conn, config, fake_client, now=NOW) == 0
+    row = conn.execute(
+        "SELECT status FROM publications WHERE id=?", (pub["id"],)
+    ).fetchone()
+    assert row["status"] == "scheduled"
+    assert fake_client.calls == []
+
+    conn.execute("UPDATE publishing_control SET is_paused=0 WHERE id=1")
+    conn.commit()
+    assert run_once(conn, config, fake_client, now=NOW) == 1
+    row = conn.execute(
+        "SELECT status, is_dry_run FROM publications WHERE id=?", (pub["id"],)
+    ).fetchone()
+    assert row["status"] == "posted"
+    assert row["is_dry_run"] == 1
+
+
+def test_global_pause_is_rechecked_before_each_publication_claim(
+    conn, config, fake_client, make_publication, monkeypatch
+):
+    monkeypatch.setenv("KILL_SWITCH", "0")
+    monkeypatch.setenv("DRY_RUN", "1")
+    monkeypatch.setattr("worker.run.load_env", lambda override=False: None)
+    first = make_publication(post_type="single", n_assets=1, now=NOW)
+    second = make_publication(post_type="single", n_assets=1, now=NOW)
+    original = __import__("worker.publisher", fromlist=["publish_one"]).publish_one
+    calls = []
+
+    def pause_after_first(*args, **kwargs):
+        calls.append(args[1]["id"])
+        result = original(*args, **kwargs)
+        if len(calls) == 1:
+            conn.execute("UPDATE publishing_control SET is_paused=1 WHERE id=1")
+            conn.commit()
+        return result
+
+    monkeypatch.setattr("worker.publisher.publish_one", pause_after_first)
+    assert run_once(conn, config, fake_client, now=NOW) == 1
+    states = {
+        row["id"]: row["status"] for row in conn.execute(
+            "SELECT id, status FROM publications WHERE id IN (?, ?)",
+            (first["id"], second["id"]),
+        )
+    }
+    assert states[first["id"]] == "posted"
+    assert states[second["id"]] == "scheduled"
