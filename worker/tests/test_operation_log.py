@@ -156,3 +156,23 @@ def test_manual_dm_outcome_appears_in_shared_operation_log(conn, config):
     assert event["status"] == "success"
     assert event["channel_name"] == "رسائل القناة"
     assert event["caption"] == "رد يدوي"
+
+
+def test_inbox_delivery_is_not_mislabeled_as_published(conn, config, make_publication, monkeypatch):
+    pub = make_publication(post_type="video", n_assets=1)
+    conn.execute(
+        "UPDATE publications SET status='posted',delivery_state='inbox',remote_post_id=NULL,remote_container_id='upload-1' WHERE id=?",
+        (pub["id"],),
+    )
+    conn.commit()
+    telegram = FakeTelegram()
+    monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
+    cfg = replace(config, telegram_bot_token="test-token",
+                  telegram_allowed_chat_ids="7441755677")
+    event = operation_log.record_publication_outcome(
+        conn, pub["id"], SimpleNamespace(result="posted", detail="upload-1"),
+        cfg, dry_run=False
+    )
+    assert event["event_type"] == "تسليم لصندوق النشر"
+    assert "لم يتم تأكيد نشره" in event["detail"]
+    assert "لم يتم نشره على الحساب بعد" in telegram.messages[0][2]
