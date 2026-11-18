@@ -153,9 +153,9 @@ def test_dm_meta_failure_is_marked_unknown_and_not_retried(conn, config):
     client = FakeTelegram()
     process_control_update(conn, cfg(config), client, cb(21, f"bs:dm:send:{outbox}"), lambda _: graph)
     assert conn.execute("SELECT status FROM telegram_dm_outbox WHERE id=?", (outbox,)).fetchone()[0] == "unknown"
+    assert "غير مؤكدة" in client.messages[-1][1]
     process_control_update(conn, cfg(config), client, cb(22, f"bs:dm:send:{outbox}"), lambda _: graph)
     assert graph.sent == []
-    assert "غير مؤكدة" in client.messages[-1][1] or "غير مؤكدة" in client.messages[-1][1]
 
 
 def test_dm_list_surfaces_meta_permission_requirements(conn, config):
