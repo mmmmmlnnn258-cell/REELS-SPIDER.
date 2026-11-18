@@ -240,6 +240,10 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
         return
     try:
         graph = graph_client_for("instagram")
+        messaging_id = (str(channel["remote_account_id"]) if "graph.instagram.com" in getattr(graph, "base", "") else str(channel["linked_page_id"] or ""))
+        if not messaging_id:
+            _send(client, token, chat_id, "يلزم ربط صفحة Facebook للقناة قبل قراءة الرسائل عبر Facebook Login.", _menu())
+            return
         conversation, messages = graph.get_instagram_conversation_messages(conversation_id, channel["access_token"])
         people = (conversation.get("participants") or {}).get("data") or []
         peer = next((p for p in people if str(p.get("id") or "") != str(channel["remote_account_id"])), {})
