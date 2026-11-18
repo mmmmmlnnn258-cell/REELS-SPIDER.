@@ -350,3 +350,28 @@ def test_old_failed_alerts_do_not_starve_newer_notifications(conn, config, monke
     assert conn.execute(
         "SELECT notified_at FROM telegram_operation_log WHERE event_key='starvation-20'"
     ).fetchone()[0]
+
+
+def test_retry_recovers_recipient_not_attempted_before_worker_crash(conn, config, monkeypatch):
+    telegram = FakeTelegram()
+    monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
+    cfg = replace(config, telegram_bot_token="test-token",
+                  telegram_allowed_chat_ids="111,222")
+    event = operation_log._insert_event(
+        conn, event_key="crash-between-recipients", event_type="نشر",
+        status="success", caption="crash recovery", detail="confirmed",
+    )
+    conn.execute(
+        """INSERT INTO telegram_operation_notifications
+           (operation_id,chat_id,last_attempt_at,attempt_count,notified_at)
+           VALUES(?,?,?,?,?)""",
+        (event["id"], "111", "2026-11-18T10:00:00+00:00", 1,
+         "2026-11-18T10:00:01+00:00"),
+    )
+    conn.commit()
+
+    assert operation_log.retry_pending_notifications(conn, cfg) == 1
+    assert [message[1] for message in telegram.messages] == ["222"]
+    assert conn.execute(
+        "SELECT notified_at FROM telegram_operation_log WHERE id=?", (event["id"],)
+    ).fetchone()[0]
