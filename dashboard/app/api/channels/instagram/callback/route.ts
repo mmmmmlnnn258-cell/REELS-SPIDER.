@@ -14,11 +14,17 @@ type MetaIdentity = {
   username?: string;
 };
 
+type MetaShortToken = {
+  access_token?: string;
+  user_id?: number | string;
+  permissions?: string;
+};
+
 type MetaPayload = {
   access_token?: string;
   token_type?: string;
   expires_in?: number;
-  data?: MetaIdentity[];
+  data?: Array<MetaIdentity & MetaShortToken>;
   error?: unknown;
 };
 
@@ -111,7 +117,12 @@ export async function GET(req: NextRequest) {
       signal: timeout,
       cache: "no-store",
     });
-    const shortToken = await readJson(shortResponse);
+    const shortPayload = await readJson(shortResponse);
+    // Meta documents the code-exchange response as { data: [{ access_token, ... }] }.
+    const shortToken =
+      Array.isArray(shortPayload?.data) && shortPayload.data.length === 1
+        ? shortPayload.data[0]
+        : null;
     if (!shortResponse.ok || !shortToken?.access_token) {
       return back(redirectUri, {
         instagram_error: "Meta could not exchange the Instagram authorization code. Check the registered callback URL and app settings, then try again.",
