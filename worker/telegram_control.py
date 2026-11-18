@@ -36,7 +36,7 @@ def _local_stamp(value: str, timezone_name: str) -> str:
 
 
 def _parse_local_schedule(value: str, timezone_name: str) -> datetime:
-    if not re.fullmatch(r"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}", value):
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", value):
         raise ValueError("اكتب التاريخ والوقت بهذا الشكل بالضبط: YYYY-MM-DD HH:MM")
     try:
         local = datetime.strptime(value, "%Y-%m-%d %H:%M")
@@ -85,10 +85,10 @@ def _schedule_list(conn, client, token: str, chat_id: str):
         state = "موقوف مؤقتاً" if row["is_held"] else (
             "بانتظار الموافقة" if row["status"] == "pending_approval" else "مجدول"
         )
-        lines.append(f"#{row['id']} · {local_time} ({row['timezone']}) · {state}\\n{caption}")
+        lines.append(f"#{row['id']} · {local_time} ({row['timezone']}) · {state}\n{caption}")
         keyboard.append([{"text": f"تفاصيل المنشور #{row['id']}", "callback_data": f"bs:schedule:view:{row['id']}"}])
     keyboard.append([{"text": "↩ القائمة", "callback_data": "bs:menu"}])
-    _send(client, token, chat_id, "\\n".join(lines), {"inline_keyboard": keyboard})
+    _send(client, token, chat_id, "\n".join(lines), {"inline_keyboard": keyboard})
 
 
 def _schedule_detail(conn, client, token: str, chat_id: str, publication_id: int):
@@ -121,11 +121,11 @@ def _schedule_detail(conn, client, token: str, chat_id: str, publication_id: int
         f"📄 تفاصيل المنشور #{row['id']}\\n"
         f"القناة: {row['account_name']}\\n"
         f"النوع: {row['post_type']}\\n"
-        f"الحالة: {status}\\n"
+        f"الحالة: {status}\n"
         f"الموعد: {_local_stamp(row['scheduled_at'], row['timezone'])} ({row['timezone']})\\n"
-        f"الوسائط: {len(assets)} ملف\\n"
+        f"الوسائط: {len(assets)} ملف\n"
         f"الوصف: {caption}\\n"
-        + ("الملفات:\\n" + "\\n".join(media) if media else "لا توجد ملفات وسائط مرتبطة.")
+        + ("الملفات:\n" + "\n".join(media) if media else "لا توجد ملفات وسائط مرتبطة.")
     )
     keyboard = {"inline_keyboard": [
         [{"text": "🕒 تأجيل الموعد", "callback_data": f"bs:schedule:reschedule:{publication_id}"}],
@@ -240,7 +240,7 @@ def process_control_update(conn, config, client, update: dict) -> bool:
                     (int(update_id), chat_id),
                 )
             _send(client, token, chat_id,
-                  f"أرسل الموعد الجديد بالتوقيت المحلي للقناة ({row['timezone']}) بهذا الشكل:\\nYYYY-MM-DD HH:MM\\nمثال: 2026-12-01 18:30\\nلديك 20 دقيقة لإرسال الموعد. أرسل /menu للإلغاء.",
+                  f"أرسل الموعد الجديد بالتوقيت المحلي للقناة ({row['timezone']}) بهذا الشكل:\nYYYY-MM-DD HH:MM\nمثال: 2026-12-01 18:30\nلديك 20 دقيقة لإرسال الموعد. أرسل /menu للإلغاء.",
                   {"inline_keyboard": [[{"text": "↩ إلغاء التأجيل", "callback_data": "bs:schedule"}]]})
             return True
         if data.startswith("bs:schedule:cancel:"):
@@ -432,7 +432,7 @@ def process_control_update(conn, config, client, update: dict) -> bool:
             try:
                 scheduled_utc = _parse_local_schedule(raw_text, session["timezone"])
             except ValueError as exc:
-                _send(client, token, chat_id, str(exc) + "\\nحاول مرة أخرى، أو أرسل /menu للإلغاء.")
+                _send(client, token, chat_id, str(exc) + "\nحاول مرة أخرى، أو أرسل /menu للإلغاء.")
                 return True
             now = now_dt.isoformat()
             with conn:
