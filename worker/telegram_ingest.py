@@ -196,8 +196,17 @@ def process_update(conn, config, client: TelegramClient, update: dict[str, Any],
     chat = message.get("chat") or {}
     chat_id = str(chat.get("id", ""))
     allowed = _allowed_chat_ids(config.telegram_allowed_chat_ids)
+    if not allowed and str(message.get("text") or "").strip().startswith("/start"):
+        _record_update(conn, update_id, chat_id or None, "ignored")
+        client.send_message(
+            config.telegram_bot_token, chat_id,
+            f"رقم محادثتك هو: {chat_id}. أضفه إلى TELEGRAM_ALLOWED_CHAT_IDS في إعدادات السيرفر لتفعيل استقبال الفيديوهات.",
+        )
+        return "ignored"
     if not chat_id or chat_id not in allowed:
         _record_update(conn, update_id, chat_id or None, "ignored")
+        if logger and chat_id:
+            logger.info("Ignored Telegram update from unapproved chat_id=%s", chat_id)
         return "ignored"
 
     video = _video_from_message(message)
@@ -331,11 +340,10 @@ def run_forever(config, logger: logging.Logger, stop_event: threading.Event) -> 
         logger.info("Telegram video receiver disabled: TELEGRAM_BOT_TOKEN is not configured.")
         return
     if not allowed:
-        logger.error(
-            "Telegram video receiver disabled: TELEGRAM_ALLOWED_CHAT_IDS is empty; "
-            "configure an explicit chat allow-list before accepting uploads."
+        logger.warning(
+            "Telegram receiver is in discovery-only mode: send /start to the bot to learn "
+            "your chat ID. Video uploads remain disabled until TELEGRAM_ALLOWED_CHAT_IDS is set."
         )
-        return
 
     client = TelegramClient(timeout=max(45, config.telegram_poll_timeout + 15))
     conn = db.connect(config.database_path)
