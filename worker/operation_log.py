@@ -196,8 +196,9 @@ def record_recovered_publication(conn, publication, config, *, logger=None, now=
              JOIN posts p ON p.id=pub.post_id JOIN channels c ON c.id=pub.channel_id
             WHERE pub.id=?""", (publication_id,)
     ).fetchone()
+    claim_stamp = str(publication["updated_at"] or publication["created_at"])
     event = _insert_event(
-        conn, event_key=f"publication:{publication_id}:recovered:{int(publication['attempt_count'])}",
+        conn, event_key=f"publication:{publication_id}:recovered:{claim_stamp}",
         event_type="نشر", status="failed", publication_id=publication_id,
         channel_name=row["account_name"] if row else None,
         caption=row["caption"] if row else None,
