@@ -799,15 +799,6 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 meta_message_id = str(result.get("message_id") or result.get("id") or "")
                 if not meta_message_id:
                     raise RuntimeError("Meta returned no message ID; delivery cannot be confirmed safely.")
-                with conn:
-                    conn.execute("UPDATE telegram_dm_outbox SET status='sent',meta_message_id=?,updated_at=? WHERE id=?",
-                                 (meta_message_id, datetime.now(timezone.utc).isoformat(), outbox_id))
-                from .operation_log import record_manual_dm_outcome
-                record_manual_dm_outcome(
-                    conn, outbox_id, status="success",
-                    detail=f"أكدت Meta الإرسال. معرّف الرسالة: {meta_message_id}",
-                )
-                _send(client, token, chat_id, f"✅ أكدت Meta إرسال الرد بنجاح. رقم الرسالة: {meta_message_id}", _menu())
             except Exception as exc:
                 from .redact import redact
                 safe_error = redact(str(exc))[:500]
@@ -820,6 +811,22 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                     detail=f"نتيجة الإرسال غير مؤكدة؛ لم تتم إعادة المحاولة تلقائياً. {safe_error}",
                 )
                 _send(client, token, chat_id, "⚠️ نتيجة الإرسال غير مؤكدة. لن نعيد المحاولة تلقائياً لتجنب تكرار الرسالة.\n" + safe_error[:300], _menu())
+                return True
+
+            # Meta confirmed delivery. Keep this persistence path separate from the
+            # Telegram acknowledgement: a failed Telegram send must never downgrade a
+            # confirmed Meta delivery to an unknown outcome.
+            with conn:
+                conn.execute("UPDATE telegram_dm_outbox SET status='sent',meta_message_id=?,updated_at=? WHERE id=?",
+                             (meta_message_id, datetime.now(timezone.utc).isoformat(), outbox_id))
+            from .operation_log import mark_operation_notified, record_manual_dm_outcome
+            event = record_manual_dm_outcome(
+                conn, outbox_id, status="success",
+                detail=f"أكدت Meta الإرسال. معرّف الرسالة: {meta_message_id}",
+            )
+            _send(client, token, chat_id, f"✅ أكدت Meta إرسال الرد بنجاح. رقم الرسالة: {meta_message_id}", _menu())
+            if event:
+                mark_operation_notified(conn, int(event["id"]))
             return True
         if data.startswith("bs:comment:fetch:"):
             raw_id = data.removeprefix("bs:comment:fetch:")
