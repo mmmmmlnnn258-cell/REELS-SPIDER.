@@ -413,6 +413,10 @@ def test_manual_dm_success_alert_has_dm_specific_text_and_can_be_retried(conn, c
     event = operation_log.record_manual_dm_outcome(
         conn, outbox, status="success", detail="Meta confirmed message id m-2"
     )
+    from datetime import datetime, timedelta, timezone
+    old_created = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+    conn.execute("UPDATE telegram_operation_log SET created_at=? WHERE id=?", (old_created, event["id"]))
+    conn.commit()
     telegram = FakeTelegram()
     monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
     cfg = replace(config, telegram_bot_token="test-token",
@@ -439,6 +443,10 @@ def test_unknown_manual_dm_outcome_is_retried_with_uncertainty_wording(conn, con
     event = operation_log.record_manual_dm_outcome(
         conn, outbox, status="info", detail="نتيجة الإرسال غير مؤكدة؛ لا تعاود الإرسال."
     )
+    from datetime import datetime, timedelta, timezone
+    old_created = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+    conn.execute("UPDATE telegram_operation_log SET created_at=? WHERE id=?", (old_created, event["id"]))
+    conn.commit()
     telegram = FakeTelegram()
     monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
     cfg = replace(config, telegram_bot_token="test-token",
