@@ -819,12 +819,14 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 with conn:
                     conn.execute("UPDATE telegram_dm_outbox SET status='unknown',last_error=?,updated_at=? WHERE id=?",
                                  (safe_error, datetime.now(timezone.utc).isoformat(), outbox_id))
-                from .operation_log import record_manual_dm_outcome
-                record_manual_dm_outcome(
+                from .operation_log import mark_operation_notified, record_manual_dm_outcome
+                event = record_manual_dm_outcome(
                     conn, outbox_id, status="info",
                     detail=f"نتيجة الإرسال غير مؤكدة؛ لم تتم إعادة المحاولة تلقائياً. {safe_error}",
                 )
                 _send(client, token, chat_id, "⚠️ نتيجة الإرسال غير مؤكدة. لن نعيد المحاولة تلقائياً لتجنب تكرار الرسالة.\n" + safe_error[:300], _menu())
+                if event:
+                    mark_operation_notified(conn, int(event["id"]))
                 return True
 
             # Meta confirmed delivery. Keep this persistence path separate from the
