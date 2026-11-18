@@ -103,7 +103,7 @@ class TelegramClient:
         relative = quote(file_path.lstrip("/"), safe="/")
         url = f"{self.base_url}/file/bot{token}/{relative}"
         try:
-            response = self.session.get(url, timeout=self.timeout)
+            response = self.session.get(url, timeout=self.timeout, stream=True)
         except requests.RequestException as exc:
             raise TelegramAPIError(
                 f"GET {redact(url)} -> request failed: {redact(str(exc))}"
@@ -119,10 +119,16 @@ class TelegramClient:
                     raise TelegramAPIError("Telegram file exceeds the configured size limit.")
             except ValueError:
                 pass
-        content = response.content
-        if len(content) > max_bytes:
-            raise TelegramAPIError("Telegram file exceeds the configured size limit.")
-        return content
+        chunks = []
+        total = 0
+        for chunk in response.iter_content(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > max_bytes:
+                raise TelegramAPIError("Telegram file exceeds the configured size limit.")
+            chunks.append(chunk)
+        return b"".join(chunks)
 
     def send_photo(
         self,
