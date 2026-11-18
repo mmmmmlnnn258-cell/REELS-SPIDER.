@@ -150,3 +150,23 @@ def record_deferred_publication(conn, publication_id: int, config, detail: str, 
     )
     _notify_once(conn, event, config, logger=logger)
     return event
+
+
+def record_manual_dm_outcome(conn, outbox_id: int, *, status: str, detail: str, now=None):
+    """Add manually confirmed DM delivery results to the same operation history."""
+    row = conn.execute(
+        """SELECT o.channel_id,o.message_text,c.account_name
+             FROM telegram_dm_outbox o JOIN channels c ON c.id=o.channel_id
+            WHERE o.id=?""", (outbox_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    if status not in {"success", "info", "failed"}:
+        raise ValueError("unsupported manual DM operation status")
+    return _insert_event(
+        conn, event_key=f"dm-outbox:{outbox_id}:{status}",
+        event_type="رسالة خاصة يدوية", status=status,
+        channel_name=row["account_name"], caption=row["message_text"],
+        detail=detail,
+        created_at=(now or datetime.now(timezone.utc)).isoformat(),
+    )
