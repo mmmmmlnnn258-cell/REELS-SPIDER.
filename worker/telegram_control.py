@@ -187,6 +187,13 @@ def process_control_update(conn, config, client, update: dict) -> bool:
         if query_id:
             client.answer_callback_query(token, query_id)
         if data == "bs:menu":
+            with conn:
+                conn.execute("DELETE FROM telegram_schedule_sessions WHERE chat_id=?", (chat_id,))
+                conn.execute(
+                    """INSERT OR IGNORE INTO telegram_ingest_updates
+                       (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
+                    (int(update_id), chat_id),
+                )
             _send(client, token, chat_id, "🕷 BLACK SPIDER\nاختر عملية:", _menu())
             return True
         if data == "bs:status":
@@ -222,6 +229,13 @@ def process_control_update(conn, config, client, update: dict) -> bool:
             return True
 
         if data == "bs:schedule":
+            with conn:
+                conn.execute("DELETE FROM telegram_schedule_sessions WHERE chat_id=?", (chat_id,))
+                conn.execute(
+                    """INSERT OR IGNORE INTO telegram_ingest_updates
+                       (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
+                    (int(update_id), chat_id),
+                )
             _schedule_list(conn, client, token, chat_id)
             return True
         if data.startswith("bs:schedule:page:"):
