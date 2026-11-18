@@ -60,6 +60,11 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
     # (alive != publishing). The dashboard reads this to know a queued refresh will be picked up.
     db.write_heartbeat(conn, now.isoformat())
 
+    # Retry any durable Telegram alerts that failed to leave the previous cycle.
+    # Notification outages must never affect publication state or stop the worker.
+    from .operation_log import retry_pending_notifications
+    retry_pending_notifications(conn, config, logger=logger)
+
     # Recover anything a previous worker claimed and never finished, BEFORE the kill
     # switch can return early. This writes no posts — it only moves an abandoned row out
     # of 'publishing', where nothing would ever look at it again. Running it above the
