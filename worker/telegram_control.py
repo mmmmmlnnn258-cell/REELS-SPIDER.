@@ -920,7 +920,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             record_control_operation(
                 conn, int(update_id), "تغيير أتمتة التعليقات",
                 f"{'تم تشغيل' if new_value else 'تم إيقاف'} أتمتة التعليقات للقاعدة #{rule_id}.",
-                now=datetime.now(timezone.utc),
+                rule_id=rule_id, now=datetime.now(timezone.utc),
             )
             _send(client, token, chat_id,
                   f"{'تم تشغيل' if new_value else 'تم إيقاف'} أتمتة التعليقات للقاعدة #{rule_id}.",
@@ -969,7 +969,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 record_control_operation(
                     conn, int(update_id), "تعديل رد التعليقات",
                     f"تم تحديث حقل الرد {edit_session['field']} للقاعدة #{edit_session['rule_id']}.",
-                    now=datetime.now(timezone.utc),
+                    rule_id=int(edit_session["rule_id"]), now=datetime.now(timezone.utc),
                 )
             _send(client, token, chat_id, "تم حفظ نص الرد." if changed.rowcount else "لم يتم الحفظ؛ القاعدة غير موجودة.", _menu())
             return True
