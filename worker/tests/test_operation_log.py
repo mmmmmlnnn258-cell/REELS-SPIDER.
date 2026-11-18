@@ -396,3 +396,54 @@ def test_dry_run_failure_does_not_hide_later_live_failure(conn, config, make_pub
     assert live["id"] != simulated["id"]
     assert len(telegram.messages) == 1
     assert "فشل النشر نهائياً" in telegram.messages[0][2]
+
+
+def test_manual_dm_success_alert_has_dm_specific_text_and_can_be_retried(conn, config, monkeypatch):
+    channel = conn.execute(
+        "INSERT INTO channels(platform,account_name) VALUES('instagram','DM channel')"
+    ).lastrowid
+    outbox = conn.execute(
+        """INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,
+             message_text,status,created_at,updated_at)
+           VALUES('7441755677',?,'conversation-1','peer-1','رد خاص','sent','now','now')""",
+        (channel,),
+    ).lastrowid
+    conn.commit()
+    event = operation_log.record_manual_dm_outcome(
+        conn, outbox, status="success", detail="Meta confirmed message id m-2"
+    )
+    telegram = FakeTelegram()
+    monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
+    cfg = replace(config, telegram_bot_token="test-token",
+                  telegram_allowed_chat_ids="7441755677")
+    assert operation_log.retry_pending_notifications(conn, cfg) == 1
+    assert "أكدت Meta إرسال الرد اليدوي بنجاح" in telegram.messages[0][2]
+    assert "نص الرد: رد خاص" in telegram.messages[0][2]
+    assert conn.execute(
+        "SELECT notified_at FROM telegram_operation_log WHERE id=?", (event["id"],)
+    ).fetchone()[0]
+
+
+def test_unknown_manual_dm_outcome_is_retried_with_uncertainty_wording(conn, config, monkeypatch):
+    channel = conn.execute(
+        "INSERT INTO channels(platform,account_name) VALUES('instagram','DM channel')"
+    ).lastrowid
+    outbox = conn.execute(
+        """INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,
+             message_text,status,created_at,updated_at)
+           VALUES('7441755677',?,'conversation-1','peer-1','رد غير مؤكد','unknown','now','now')""",
+        (channel,),
+    ).lastrowid
+    conn.commit()
+    event = operation_log.record_manual_dm_outcome(
+        conn, outbox, status="info", detail="نتيجة الإرسال غير مؤكدة؛ لا تعاود الإرسال."
+    )
+    telegram = FakeTelegram()
+    monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
+    cfg = replace(config, telegram_bot_token="test-token",
+                  telegram_allowed_chat_ids="7441755677")
+    assert operation_log.retry_pending_notifications(conn, cfg) == 1
+    assert "نتيجة إرسال الرد اليدوي غير مؤكدة" in telegram.messages[0][2]
+    assert conn.execute(
+        "SELECT notified_at FROM telegram_operation_log WHERE id=?", (event["id"],)
+    ).fetchone()[0]
