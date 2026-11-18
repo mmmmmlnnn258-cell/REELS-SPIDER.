@@ -50,15 +50,21 @@ def _notify_once(conn, row, config, logger=None):
             "failed": "فشل النشر نهائياً",
         }.get(status, "تحديث عملية")
     )
-    caption = (row["caption"] or "بدون وصف").replace("\\n", " ")[:180]
+    caption = (row["caption"] or "بدون وصف").replace("\n", " ")[:180]
     message = (
-        f"{icon} BLACK SPIDER\\n{heading}\\n"
-        f"العملية: {row['event_type']} · #{row['publication_id'] or '—'}\\n"
-        f"القناة: {row['channel_name'] or 'غير محددة'}\\n"
-        f"المنشور: {caption}\\n"
+        f"{icon} BLACK SPIDER\n{heading}\n"
+        f"العملية: {row['event_type']} · #{row['publication_id'] or '—'}\n"
+        f"القناة: {row['channel_name'] or 'غير محددة'}\n"
+        f"المنشور: {caption}\n"
         f"التفاصيل: {(row['detail'] or 'لا توجد تفاصيل إضافية')[:900]}"
     )
-    client = _telegram_client()
+    try:
+        client = _telegram_client()
+    except Exception as exc:
+        if logger:
+            logger.warning("BLACK SPIDER notification client unavailable for operation %s: %s",
+                           row["id"], redact(str(exc))[:300])
+        return
     for chat_id in chats:
         delivered = conn.execute(
             """SELECT 1 FROM telegram_operation_notifications
@@ -149,7 +155,7 @@ def record_recovered_publication(conn, publication, config, *, logger=None, now=
             WHERE pub.id=?""", (publication_id,)
     ).fetchone()
     event = _insert_event(
-        conn, event_key=f"publication:{publication_id}:recovered",
+        conn, event_key=f"publication:{publication_id}:recovered:{int(publication['attempt_count'])}",
         event_type="نشر", status="failed", publication_id=publication_id,
         channel_name=row["account_name"] if row else None,
         caption=row["caption"] if row else None,
