@@ -75,10 +75,11 @@ def msg(update_id, text):
     }}
 
 
-def connected_channel(conn):
+def connected_channel(conn, linked_page_id=None):
     return conn.execute(
-        """INSERT INTO channels(platform,account_name,remote_account_id,access_token,is_active)
-           VALUES('instagram','connected','ig-business','test-access',1)"""
+        """INSERT INTO channels(platform,account_name,remote_account_id,linked_page_id,access_token,is_active)
+           VALUES('instagram','connected','ig-business',?,'test-access',1)""",
+        (linked_page_id,),
     ).lastrowid
 
 
@@ -196,6 +197,20 @@ def test_menu_command_cancels_pending_dm_previews(conn, config):
     client = FakeTelegram()
     process_control_update(conn, cfg(config), client, msg(203, "/menu"))
     assert conn.execute("SELECT status FROM telegram_dm_outbox WHERE id=?", (outbox,)).fetchone()[0] == "cancelled"
+
+
+def test_facebook_login_dm_uses_linked_page_id_for_send(conn, config):
+    channel = connected_channel(conn, linked_page_id="page-123")
+    graph = FakeGraph()
+    graph.base = "https://graph.facebook.com/v25.0"
+    client = FakeTelegram()
+    graph_for = lambda platform: graph
+    process_control_update(conn, cfg(config), client, cb(205, f"bs:dm:view:{channel}:9001"), graph_for)
+    process_control_update(conn, cfg(config), client, cb(206, "bs:dm:compose"), graph_for)
+    process_control_update(conn, cfg(config), client, msg(207, "رد يدوي"), graph_for)
+    outbox = conn.execute("SELECT id FROM telegram_dm_outbox").fetchone()["id"]
+    process_control_update(conn, cfg(config), client, cb(208, f"bs:dm:send:{outbox}"), graph_for)
+    assert graph.sent == [("page-123", "person-77", "رد يدوي")]
 
 
 def test_dm_meta_failure_is_marked_unknown_and_not_retried(conn, config):
