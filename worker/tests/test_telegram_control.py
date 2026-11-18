@@ -319,8 +319,8 @@ def test_schedule_list_shows_scheduled_items_and_detail_buttons(conn, config):
     assert f"#{first}" in body and f"#{second}" in body
     assert "failed" not in body
     callbacks = [button["callback_data"] for row in keyboard for button in row]
-    assert f"bs:schedule:view:{first}" in callbacks
-    assert f"bs:schedule:view:{second}" in callbacks
+    assert any(value.startswith(f"bs:schedule:view:{first}:") for value in callbacks)
+    assert any(value.startswith(f"bs:schedule:view:{second}:") for value in callbacks)
 
 
 def test_schedule_details_show_caption_channel_and_media_without_mutation(conn, config):
@@ -470,3 +470,21 @@ def test_unauthorized_text_cannot_consume_another_chats_schedule_session(conn, c
     ) is False
     assert conn.execute("SELECT COUNT(*) FROM telegram_schedule_sessions").fetchone()[0] == 1
     assert conn.execute("SELECT scheduled_at FROM publications WHERE id=?", (publication,)).fetchone()[0] == "2099-01-01T12:00:00+00:00"
+
+
+def test_schedule_list_paginates_more_than_eight_and_details_return_to_page(conn, config):
+    publications = [_scheduled_post(conn)[2] for _ in range(9)]
+    client = FakeTelegram()
+    process_control_update(conn, cfg(config), client, callback(update_id=1112, data="bs:schedule"))
+    first_callbacks = [b["callback_data"] for row in client.messages[-1][2]["inline_keyboard"] for b in row]
+    assert "bs:schedule:page:1" in first_callbacks
+    assert sum(value.startswith("bs:schedule:view:") for value in first_callbacks) == 8
+    process_control_update(conn, cfg(config), client, callback(update_id=1113, data="bs:schedule:page:1"))
+    second_callbacks = [b["callback_data"] for row in client.messages[-1][2]["inline_keyboard"] for b in row]
+    assert f"bs:schedule:view:{publications[-1]}:1" in second_callbacks
+    process_control_update(
+        conn, cfg(config), client,
+        callback(update_id=1114, data=f"bs:schedule:view:{publications[-1]}:1"),
+    )
+    back = [b["callback_data"] for row in client.messages[-1][2]["inline_keyboard"] for b in row]
+    assert "bs:schedule:page:1" in back
