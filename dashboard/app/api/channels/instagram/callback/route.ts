@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getChannel, getChannels, updateChannel } from "@/lib/queries";
+import { connectInstagramChannel, getChannel } from "@/lib/queries";
 import { config, instagramCredentials } from "@/lib/config";
 import {
   INSTAGRAM_GRAPH_BASE,
@@ -156,18 +156,6 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const duplicate = getChannels().find(
-      (channel) =>
-        channel.platform === "instagram" &&
-        channel.remote_account_id === remoteAccountId &&
-        channel.id !== targetId,
-    );
-    if (duplicate) {
-      return back(req, {
-        instagram_error: "This Instagram account is already linked to another channel. No channel credentials were changed.",
-      });
-    }
-
     const expiresIn = Number(longToken.expires_in);
     if (!Number.isFinite(expiresIn) || expiresIn <= 0) {
       return back(req, {
@@ -175,15 +163,24 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Update the explicitly selected row. Keep its display name, timezone, active flag,
-    // queue, history, approval settings and other channel configuration intact.
-    updateChannel(targetId, {
-      remote_account_id: remoteAccountId,
-      access_token: longToken.access_token,
-      token_expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
-      token_error: null,
-      token_next_check_at: null,
+    // Atomically update the explicitly selected row and guard against the same IG
+    // account being attached to a second channel by concurrent OAuth callbacks.
+    const linked = connectInstagramChannel({
+      channelId: targetId,
+      remoteAccountId,
+      accessToken: longToken.access_token,
+      tokenExpiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
     });
+    if (linked === "already_linked") {
+      return back(req, {
+        instagram_error: "This Instagram account is already linked to another channel. No channel credentials were changed.",
+      });
+    }
+    if (linked !== "connected") {
+      return back(req, {
+        instagram_error: "The selected Instagram channel no longer exists. No credentials were changed.",
+      });
+    }
 
     return back(req, {
       instagram_connected: String(targetId),
