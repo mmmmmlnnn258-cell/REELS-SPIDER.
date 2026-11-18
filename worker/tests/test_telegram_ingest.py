@@ -105,7 +105,7 @@ def test_video_update_creates_reel_and_scheduled_publication_for_first_connected
 
     assert result == "processed"
     post = conn.execute("SELECT * FROM posts").fetchone()
-    assert post["post_type"] == "reel"
+    assert post["post_type"] == "video"
     assert post["caption"] == "Test Reel caption"
     asset = conn.execute(
         """SELECT a.* FROM assets a
@@ -114,6 +114,9 @@ def test_video_update_creates_reel_and_scheduled_publication_for_first_connected
     ).fetchone()
     assert asset["media_kind"] == "video"
     assert asset["mime_type"] == "video/mp4"
+    assert asset["duration_ms"] == 12000
+    assert asset["width"] == 720
+    assert asset["height"] == 1280
     assert (cfg.asset_storage_dir / asset["storage_path"]).read_bytes() == VIDEO_BYTES
     publication = conn.execute("SELECT * FROM publications").fetchone()
     assert publication["channel_id"] == expected_channel
