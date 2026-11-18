@@ -118,3 +118,21 @@ def test_notification_failure_does_not_escape_worker(conn, config, make_publicat
     assert conn.execute(
         "SELECT notified_at FROM telegram_operation_log"
     ).fetchone()[0] is None
+
+
+def test_deferred_attempt_is_logged_and_notified_once(conn, config, make_publication, monkeypatch):
+    pub = make_publication(post_type="single", n_assets=1)
+    telegram = FakeTelegram()
+    monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
+    cfg = replace(config, telegram_bot_token="test-token",
+                  telegram_allowed_chat_ids="7441755677")
+    first = operation_log.record_deferred_publication(
+        conn, pub["id"], cfg, "publish endpoint unavailable"
+    )
+    second = operation_log.record_deferred_publication(
+        conn, pub["id"], cfg, "publish endpoint unavailable"
+    )
+    assert first["status"] == "retrying"
+    assert second["id"] == first["id"]
+    assert len(telegram.messages) == 1
+    assert "ستتم إعادة المحاولة" in telegram.messages[0][2]
