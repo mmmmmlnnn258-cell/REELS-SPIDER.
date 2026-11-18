@@ -140,13 +140,13 @@ def _schedule_detail(conn, client, token: str, chat_id: str, publication_id: int
         "بانتظار الموافقة" if row["status"] == "pending_approval" else "مجدول"
     )
     body = (
-        f"📄 تفاصيل المنشور #{row['id']}\\n"
-        f"القناة: {row['account_name']}\\n"
-        f"النوع: {row['post_type']}\\n"
+        f"📄 تفاصيل المنشور #{row['id']}\n"
+        f"القناة: {row['account_name']}\n"
+        f"النوع: {row['post_type']}\n"
         f"الحالة: {status}\n"
-        f"الموعد: {_local_stamp(row['scheduled_at'], row['timezone'])} ({row['timezone']})\\n"
+        f"الموعد: {_local_stamp(row['scheduled_at'], row['timezone'])} ({row['timezone']})\n"
         f"الوسائط: {len(assets)} ملف\n"
-        f"الوصف: {caption}\\n"
+        f"الوصف: {caption}\n"
         + ("الملفات:\n" + "\n".join(media) if media else "لا توجد ملفات وسائط مرتبطة.")
     )
     keyboard = {"inline_keyboard": [
