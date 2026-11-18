@@ -206,3 +206,86 @@ def test_failed_telegram_alert_is_retried_on_later_worker_cycle(conn, config, ma
     assert conn.execute(
         "SELECT notified_at FROM telegram_operation_log"
     ).fetchone()[0]
+
+
+def test_partial_multi_chat_delivery_retries_only_the_missing_recipient(conn, config, make_publication, monkeypatch):
+    pub = make_publication(post_type="single", n_assets=1)
+    conn.execute(
+        "UPDATE publications SET status='posted',attempt_count=1,remote_post_id='ig-media-multi' WHERE id=?",
+        (pub["id"],),
+    )
+    conn.commit()
+
+    class PartiallyFailingTelegram:
+        def __init__(self):
+            self.calls = []
+            self.failed_second = False
+
+        def send_message(self, token, chat_id, message):
+            self.calls.append(chat_id)
+            if chat_id == "222" and not self.failed_second:
+                self.failed_second = True
+                raise RuntimeError("temporary outage for second chat")
+            return {"message_id": len(self.calls)}
+
+    telegram = PartiallyFailingTelegram()
+    monkeypatch.setattr(operation_log, "_telegram_client", lambda: telegram)
+    cfg = replace(config, telegram_bot_token="test-token",
+                  telegram_allowed_chat_ids="111,222")
+    outcome = SimpleNamespace(result="posted", detail="ig-media-multi")
+    event = operation_log.record_publication_outcome(
+        conn, pub["id"], outcome, cfg, dry_run=False
+    )
+    assert telegram.calls == ["111", "222"]
+    assert event["notified_at"] is None
+
+    operation_log.retry_pending_notifications(conn, cfg)
+    assert telegram.calls == ["111", "222", "222"]
+    assert conn.execute(
+        "SELECT COUNT(*) FROM telegram_operation_notifications WHERE operation_id=?",
+        (event["id"],),
+    ).fetchone()[0] == 2
+    assert conn.execute(
+        "SELECT notified_at FROM telegram_operation_log WHERE id=?", (event["id"],)
+    ).fetchone()[0]
+
+
+def test_deferred_errors_are_deduplicated_per_publication_and_hour(conn, config, make_publication):
+    from datetime import datetime, timezone
+
+    pub = make_publication(post_type="single", n_assets=1)
+    first = operation_log.record_deferred_publication(
+        conn, pub["id"], config, "cloudflared temporary error",
+        now=datetime(2026, 11, 18, 10, 1, tzinfo=timezone.utc),
+    )
+    second = operation_log.record_deferred_publication(
+        conn, pub["id"], config, "cloudflared different transient detail",
+        now=datetime(2026, 11, 18, 10, 45, tzinfo=timezone.utc),
+    )
+    third = operation_log.record_deferred_publication(
+        conn, pub["id"], config, "cloudflared still unavailable",
+        now=datetime(2026, 11, 18, 11, 1, tzinfo=timezone.utc),
+    )
+    assert first["id"] == second["id"]
+    assert third["id"] != first["id"]
+
+
+def test_repeated_recovery_after_a_new_attempt_is_logged_again(conn, config, make_publication):
+    pub = make_publication(post_type="single", n_assets=1)
+    row = conn.execute(
+        "SELECT * FROM publications WHERE id=?", (pub["id"],)
+    ).fetchone()
+    first = operation_log.record_recovered_publication(conn, row, config)
+    conn.execute(
+        "UPDATE publications SET attempt_count=attempt_count+1 WHERE id=?", (pub["id"],)
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT * FROM publications WHERE id=?", (pub["id"],)
+    ).fetchone()
+    second = operation_log.record_recovered_publication(conn, row, config)
+    assert first["id"] != second["id"]
+    assert conn.execute(
+        "SELECT COUNT(*) FROM telegram_operation_log WHERE publication_id=? AND status='failed'",
+        (pub["id"],),
+    ).fetchone()[0] == 2
