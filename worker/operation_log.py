@@ -228,3 +228,25 @@ def retry_pending_notifications(conn, config, *, logger=None, limit: int = 20):
         tuple(row["id"] for row in rows),
     ).fetchone()[0] if rows else 0
     return delivered_after
+
+
+def record_terminal_publication_failure(conn, publication_id: int, config, detail: str, *,
+                                        logger=None, now=None):
+    """Record a terminal failure detected before publish_one could return an outcome."""
+    row = conn.execute(
+        """SELECT pub.attempt_count,p.caption,c.account_name
+             FROM publications pub JOIN posts p ON p.id=pub.post_id
+             JOIN channels c ON c.id=pub.channel_id WHERE pub.id=?""",
+        (publication_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    event = _insert_event(
+        conn, event_key=f"publication:{publication_id}:failed:{row['attempt_count']}",
+        event_type="نشر", status="failed", publication_id=publication_id,
+        channel_name=row["account_name"], caption=row["caption"],
+        detail=detail or "فشل النشر قبل بدء المحاولة بسبب إعداد غير صالح.",
+        created_at=(now or datetime.now(timezone.utc)).isoformat(),
+    )
+    _notify_once(conn, event, config, logger=logger)
+    return event
