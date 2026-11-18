@@ -249,22 +249,30 @@ def retry_pending_notifications(conn, config, *, logger=None, limit: int = 20):
     retry_before = (
         datetime.now(timezone.utc) - timedelta(seconds=NOTIFICATION_RETRY_SECONDS)
     ).isoformat()
+    eligibility = []
+    parameters = []
+    for chat_id in _allowed(config.telegram_allowed_chat_ids):
+        eligibility.append(
+            """(
+                NOT EXISTS (
+                    SELECT 1 FROM telegram_operation_notifications missing
+                     WHERE missing.operation_id=event.id AND missing.chat_id=?
+                )
+                OR EXISTS (
+                    SELECT 1 FROM telegram_operation_notifications pending
+                     WHERE pending.operation_id=event.id AND pending.chat_id=?
+                       AND pending.notified_at IS NULL
+                       AND (pending.last_attempt_at IS NULL OR pending.last_attempt_at<=?)
+                )
+            )"""
+        )
+        parameters.extend((chat_id, chat_id, retry_before))
     rows = conn.execute(
         """SELECT event.* FROM telegram_operation_log event
             WHERE event.notified_at IS NULL AND event.status IN ('success','retrying','failed')
-              AND (
-                NOT EXISTS (
-                    SELECT 1 FROM telegram_operation_notifications n
-                     WHERE n.operation_id=event.id
-                )
-                OR EXISTS (
-                    SELECT 1 FROM telegram_operation_notifications n
-                     WHERE n.operation_id=event.id AND n.notified_at IS NULL
-                       AND (n.last_attempt_at IS NULL OR n.last_attempt_at<=?)
-                )
-              )
-            ORDER BY event.created_at ASC,event.id ASC LIMIT ?""",
-        (retry_before, max(1, min(int(limit), 100))),
+              AND (%s)
+            ORDER BY event.created_at ASC,event.id ASC LIMIT ?""" % " OR ".join(eligibility),
+        (*parameters, max(1, min(int(limit), 100))),
     ).fetchall()
     for row in rows:
         _notify_once(conn, row, config, logger=logger)
