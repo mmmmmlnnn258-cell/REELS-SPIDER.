@@ -78,12 +78,9 @@ export const config = {
   // values and not one.
   graphVersion: get("META_GRAPH_VERSION", "v25.0"),
   threadsApiVersion: get("THREADS_API_VERSION", "v1.0"),
-  // Which Meta login path this install is on. worker/clients.py:46 resolves INSTAGRAM's
-  // host from this same var, so it decides what an Instagram token here even is:
-  //   graph.instagram.com  -> Instagram-Login: the token identifies the IG account itself
-  //   graph.facebook.com   -> Facebook-Login: the token is a FACEBOOK user token, and the
-  //                           IG id is reached via a Page, not via /me
-  // The default is graph.facebook.com (.env.example:71), so this cannot be assumed.
+  // Legacy fallback for Instagram channels created before per-channel login metadata.
+  // New channels with facebook_login or instagram_login use their fixed host in
+  // worker/clients.py; changing this value must not switch those channels.
   graphBase: get("META_GRAPH_BASE", "https://graph.facebook.com"),
   // The Meta app's own credentials, same vars as worker/config.py:241-242. Needed to
   // extend a short-lived token and to call debug_token. Server-side only — these are
