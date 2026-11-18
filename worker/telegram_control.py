@@ -760,6 +760,12 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                     "WHERE id=? AND chat_id=? AND status='pending'",
                     (datetime.now(timezone.utc).isoformat(), int(raw_id), chat_id),
                 )
+                if update_id is not None:
+                    conn.execute(
+                        """INSERT OR IGNORE INTO telegram_ingest_updates
+                           (update_id,chat_id,status) VALUES(?,?,'ignored')""",
+                        (int(update_id), chat_id),
+                    )
             if canceled.rowcount == 1:
                 _send(client, token, chat_id, "تم إلغاء الرد. لن يمكن إرساله من زر التأكيد القديم.", _menu())
             else:
@@ -784,6 +790,12 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                         (now, outbox_id, chat_id, cutoff))
                 row = conn.execute("SELECT * FROM telegram_dm_outbox WHERE id=? AND chat_id=?",
                                    (outbox_id, chat_id)).fetchone()
+                if update_id is not None:
+                    conn.execute(
+                        """INSERT OR IGNORE INTO telegram_ingest_updates
+                           (update_id,chat_id,status) VALUES(?,?,'ignored')""",
+                        (int(update_id), chat_id),
+                    )
             if claim.rowcount != 1 or row is None:
                 _send(client, token, chat_id, "انتهت صلاحية المعاينة أو سبق تأكيدها/إلغاؤها؛ افتح المحادثة وأنشئ معاينة جديدة.", _menu())
                 return True
