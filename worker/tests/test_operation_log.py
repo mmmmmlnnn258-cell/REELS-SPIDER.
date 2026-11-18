@@ -447,3 +447,22 @@ def test_unknown_manual_dm_outcome_is_retried_with_uncertainty_wording(conn, con
     assert conn.execute(
         "SELECT notified_at FROM telegram_operation_log WHERE id=?", (event["id"],)
     ).fetchone()[0]
+
+
+def test_operation_log_redacts_credentials_from_caption_text(conn, config):
+    channel = conn.execute(
+        "INSERT INTO channels(platform,account_name) VALUES('instagram','safe channel')"
+    ).lastrowid
+    secret_text = "message contains EAA" + "A" * 28
+    outbox = conn.execute(
+        """INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,
+             message_text,status,created_at,updated_at)
+           VALUES('7441755677',?,'conversation-1','peer-1',?,'sent','now','now')""",
+        (channel, secret_text),
+    ).lastrowid
+    conn.commit()
+    event = operation_log.record_manual_dm_outcome(
+        conn, outbox, status="success", detail="Meta confirmed"
+    )
+    assert "EAA" not in event["caption"]
+    assert "<redacted>" in event["caption"]
