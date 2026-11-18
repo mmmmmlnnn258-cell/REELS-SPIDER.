@@ -53,12 +53,14 @@ def test_operation_log_shows_recent_success_and_failure(conn, config):
     )
     conn.commit()
     client = FakeTelegram()
-    assert process_control_update(conn, cfg(config), client, cb(2, "bs:operations"))
+    local_cfg = replace(cfg(config), default_timezone="Asia/Aden")
+    assert process_control_update(conn, local_cfg, client, cb(2, "bs:operations"))
     body = client.messages[-1][1]
     assert "وصف فاشل" in body
     assert "رفضت المنصة الطلب" in body
     assert "وصف ناجح" in body
     assert "نجاح" in body and "فشل" in body
+    assert "15:00 (Asia/Aden)" in body
 
 
 def test_operation_log_pagination_is_bounded(conn, config):
