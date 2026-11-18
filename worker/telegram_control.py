@@ -189,11 +189,30 @@ def _comment_rule_detail(conn, client, token, chat_id, rule_id):
     _send(client, token, chat_id, body, {"inline_keyboard": [
         [{"text": "✏️ تعديل الرد العام", "callback_data": f"bs:comment:edit:{rule_id}:public"}],
         [{"text": "✏️ تعديل الرد الخاص", "callback_data": f"bs:comment:edit:{rule_id}:private"}],
+        [{"text": "📥 عرض التعليقات", "callback_data": f"bs:comment:fetch:{rule_id}"}],
         [{"text": "📜 سجل الردود", "callback_data": f"bs:comment:logs:{rule_id}"}],
         [{"text": f"{'⏸ إيقاف' if row['enabled'] else '▶️ تشغيل'} الأتمتة", "callback_data": f"bs:comment:{rule_id}"}],
         [{"text": "↩ إدارة التعليقات", "callback_data": "bs:comments"}],
     ]})
 
+
+def _comment_live_list(conn, client, graph_client_for, token, chat_id, rule_id):
+    row = conn.execute("SELECT r.media_id,c.remote_account_id,c.access_token FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id WHERE r.id=? AND c.platform='instagram' AND c.is_active=1 AND c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL", (rule_id,)).fetchone()
+    if row is None or graph_client_for is None:
+        _send(client, token, chat_id, "القاعدة غير متاحة أو عميل Meta غير جاهز.", _menu())
+        return
+    try:
+        comments, _ = graph_client_for("instagram").get_media_comments(str(row["media_id"]), row["access_token"], limit=25)
+        lines = [f"💬 أحدث التعليقات للقاعدة #{rule_id}:"]
+        for item in comments[:12]:
+            author = (item.get("from") or {}).get("username") or item.get("username") or "مستخدم"
+            lines.append(f"\n{author}: {str(item.get('text') or '[تعليق بلا نص]')[:500]}")
+        if not comments:
+            lines.append("لا توجد تعليقات ظاهرة.")
+        _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[[{"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{rule_id}"}]]})
+    except Exception as exc:
+        from .redact import redact
+        _send(client, token, chat_id, f"تعذر جلب التعليقات من Meta: {redact(str(exc))[:400]}\nتحقق من instagram_manage_comments.", _menu())
 
 def _dm_list(conn, client, graph_client_for, token, chat_id):
     channels = _connected_ig_channels(conn)
@@ -631,6 +650,13 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                     conn.execute("UPDATE telegram_dm_outbox SET status='unknown',last_error=?,updated_at=? WHERE id=?",
                                  (redact(str(exc))[:500], datetime.now(timezone.utc).isoformat(), outbox_id))
                 _send(client, token, chat_id, "⚠️ نتيجة الإرسال غير مؤكدة. لن نعيد المحاولة تلقائياً لتجنب تكرار الرسالة.\n" + redact(str(exc))[:300], _menu())
+            return True
+        if data.startswith("bs:comment:fetch:"):
+            raw_id = data.removeprefix("bs:comment:fetch:")
+            if raw_id.isdigit() and len(raw_id) <= 9:
+                _comment_live_list(conn, client, graph_client_for, token, chat_id, int(raw_id))
+            else:
+                _send(client, token, chat_id, "رقم القاعدة غير صالح.", _menu())
             return True
         if data.startswith("bs:comment:detail:"):
             raw_id = data.removeprefix("bs:comment:detail:")
