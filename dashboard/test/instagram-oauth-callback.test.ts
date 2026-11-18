@@ -13,6 +13,7 @@ async function setup() {
   if (!setupPromise) {
     process.env.META_APP_ID = "test-meta-app";
     process.env.INSTAGRAM_APP_SECRET = "test-instagram-secret";
+    process.env.INSTAGRAM_REDIRECT_URI = "https://scheduler.example.test/api/channels/instagram/callback";
     process.env.META_GRAPH_VERSION = "v27.0";
     makeTestDb();
     const [q, route] = await Promise.all([
