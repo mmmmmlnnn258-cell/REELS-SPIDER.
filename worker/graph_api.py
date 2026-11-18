@@ -365,9 +365,18 @@ class GraphClient:
         return [item for item in (data.get("data") or []) if isinstance(item, dict)]
 
     def get_instagram_conversation_messages(self, conversation_id: str, token: str):
-        """Read the messages and participants for one Instagram conversation."""
+        """Read the messages and participants for one Instagram conversation.
+
+        Meta documents conversation IDs as opaque strings; encode them as one path
+        segment instead of assuming they are numeric or treating them as URL syntax.
+        """
+        from urllib.parse import quote
+
+        conversation_id = str(conversation_id or "")
+        if not conversation_id or len(conversation_id) > 512:
+            raise ValueError("a valid Instagram conversation ID is required")
         data = self._get(
-            conversation_id,
+            quote(conversation_id, safe=""),
             {"fields": "id,updated_time,participants,messages{id,created_time,from,to,message}",
              "access_token": token},
         )
