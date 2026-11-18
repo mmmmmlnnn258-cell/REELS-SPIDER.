@@ -226,3 +226,26 @@ def test_download_file_enforces_declared_size_limit():
     c = TelegramClient(session=session)
     with pytest.raises(TelegramAPIError, match="size limit"):
         c.download_file(TOKEN, "videos/reel.mp4", 10)
+
+
+def test_send_message_serializes_inline_keyboard_as_json():
+    c = client([FakeResponse({"ok": True, "result": {"message_id": 7}})])
+    keyboard = {"inline_keyboard": [[{"text": "Status", "callback_data": "bs:status"}]]}
+    c.send_message(TOKEN, "chat-1", "menu", reply_markup=keyboard)
+    _url, data, _files = c.session.posts[0]
+    assert json.loads(data["reply_markup"]) == keyboard
+
+
+def test_answer_callback_query_posts_callback_id():
+    c = client([FakeResponse({"ok": True, "result": True})])
+    c.answer_callback_query(TOKEN, "callback-1", "Done")
+    _url, data, _files = c.session.posts[0]
+    assert _url.endswith("/answerCallbackQuery")
+    assert data == {"callback_query_id": "callback-1", "text": "Done"}
+
+
+def test_get_updates_requests_callback_queries():
+    c = client([FakeResponse({"ok": True, "result": []})])
+    c.get_updates(TOKEN, timeout=20)
+    _url, data, _files = c.session.posts[0]
+    assert "callback_query" in json.loads(data["allowed_updates"])
