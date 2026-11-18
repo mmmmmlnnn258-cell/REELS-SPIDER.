@@ -357,7 +357,7 @@ def probe_channels(rows, registry: ClientRegistry, *, print_fn=print) -> list[Pr
             print_fn(f"  · platform '{ch['platform']}' has no account-insights endpoint — skipped")
             continue
         try:
-            probe(registry.for_platform(ch["platform"]), ch, result, print_fn)
+            probe(registry.for_platform(ch), ch, result, print_fn)
         except Exception as exc:  # noqa: BLE001
             result.fatal = redact(str(exc))
             print_fn(f"  ✗ probe aborted: {_short(result.fatal)}")
