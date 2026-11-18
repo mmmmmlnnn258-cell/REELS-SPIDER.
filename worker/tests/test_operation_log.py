@@ -306,3 +306,33 @@ def test_dry_run_validation_failure_is_not_reported_as_live_publish_failure(
     assert event["status"] == "dry_run"
     assert "لم تتم محاولة النشر على Instagram" in event["detail"]
     assert telegram.messages == []
+
+
+def test_old_failed_alerts_do_not_starve_newer_notifications(conn, config, monkeypatch):
+    telegram = FakeTelegram()
+
+    class FailingOldAlerts:
+        def send_message(self, token, chat_id, message):
+            if "event-20" not in message:
+                raise RuntimeError("blocked recipient for old event")
+            return telegram.send_message(token, chat_id, message)
+
+    monkeypatch.setattr(operation_log, "_telegram_client", lambda: FailingOldAlerts())
+    cfg = replace(config, telegram_bot_token="test-token",
+                  telegram_allowed_chat_ids="7441755677")
+    for i in range(21):
+        operation_log._insert_event(
+            conn, event_key=f"starvation-{i}", event_type="نشر", status="success",
+            caption=f"event-{i}", detail="success",
+            created_at=f"2026-11-18T12:{i:02d}:00+00:00",
+        )
+
+    assert operation_log.retry_pending_notifications(conn, cfg, limit=20) == 0
+    # The first 20 failed recipients are in backoff; the 21st event must be selected
+    # on the next poll rather than being starved behind the same oldest failures.
+    assert operation_log.retry_pending_notifications(conn, cfg, limit=20) == 1
+    assert len(telegram.messages) == 1
+    assert "event-20" in telegram.messages[0][2]
+    assert conn.execute(
+        "SELECT notified_at FROM telegram_operation_log WHERE event_key='starvation-20'"
+    ).fetchone()[0]
