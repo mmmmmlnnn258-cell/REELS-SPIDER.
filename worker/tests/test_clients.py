@@ -1,6 +1,6 @@
 import pytest
 
-from worker.clients import FACEBOOK_BASE, PLATFORM_CAPS, ClientRegistry, base_url_for
+from worker.clients import FACEBOOK_BASE, INSTAGRAM_BASE, PLATFORM_CAPS, ClientRegistry, base_url_for
 
 
 def test_facebook_always_uses_facebook_base_even_on_an_ig_login_install(config):
@@ -14,6 +14,48 @@ def test_instagram_uses_the_installs_configured_base(config):
     config.graph_base = "https://graph.instagram.com"
     assert base_url_for("instagram", config) == "https://graph.instagram.com"
 
+
+
+def test_instagram_host_is_selected_from_each_channel_auth_method(config):
+    config.graph_base = FACEBOOK_BASE
+    facebook_login = {"platform": "instagram", "instagram_auth_method": "facebook_login"}
+    instagram_login = {"platform": "instagram", "instagram_auth_method": "instagram_login"}
+    legacy = {"platform": "instagram", "instagram_auth_method": "legacy"}
+
+    assert base_url_for("instagram", config, facebook_login) == FACEBOOK_BASE
+    assert base_url_for("instagram", config, instagram_login) == INSTAGRAM_BASE
+    assert base_url_for("instagram", config, legacy) == FACEBOOK_BASE
+
+
+def test_registry_keeps_both_instagram_login_clients_separate(config):
+    config.graph_base = FACEBOOK_BASE
+    built = []
+
+    def factory(version, base_url):
+        built.append(base_url)
+        return ("client", base_url)
+
+    registry = ClientRegistry(config, factory=factory)
+    fb_login = registry.for_platform({
+        "platform": "instagram", "instagram_auth_method": "facebook_login",
+    })
+    ig_login = registry.for_platform({
+        "platform": "instagram", "instagram_auth_method": "instagram_login",
+    })
+    assert fb_login == ("client", FACEBOOK_BASE)
+    assert ig_login == ("client", INSTAGRAM_BASE)
+    assert fb_login is not ig_login
+    assert registry.for_platform({
+        "platform": "instagram", "instagram_auth_method": "instagram_login",
+    }) is ig_login
+    assert built == [FACEBOOK_BASE, INSTAGRAM_BASE]
+
+
+def test_unknown_instagram_auth_method_fails_closed(config):
+    with pytest.raises(ValueError, match="Unknown Instagram auth method"):
+        base_url_for("instagram", config, {
+            "platform": "instagram", "instagram_auth_method": "unexpected",
+        })
 
 def test_unknown_platform_raises_instead_of_guessing_a_host(config):
     # Silently returning the install's base URL is how a new platform ends up talking to
