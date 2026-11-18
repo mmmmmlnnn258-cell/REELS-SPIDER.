@@ -136,3 +136,23 @@ def test_deferred_attempt_is_logged_and_notified_once(conn, config, make_publica
     assert second["id"] == first["id"]
     assert len(telegram.messages) == 1
     assert "ستتم إعادة المحاولة" in telegram.messages[0][2]
+
+
+def test_manual_dm_outcome_appears_in_shared_operation_log(conn, config):
+    channel = conn.execute(
+        "INSERT INTO channels(platform,account_name) VALUES('instagram','رسائل القناة')"
+    ).lastrowid
+    outbox = conn.execute(
+        """INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,
+             message_text,status,created_at,updated_at)
+           VALUES('7441755677',?,'conversation-1','peer-1','رد يدوي','sent','now','now')""",
+        (channel,),
+    ).lastrowid
+    conn.commit()
+    event = operation_log.record_manual_dm_outcome(
+        conn, outbox, status="success", detail="Meta message id: m-1"
+    )
+    assert event["event_type"] == "رسالة خاصة يدوية"
+    assert event["status"] == "success"
+    assert event["channel_name"] == "رسائل القناة"
+    assert event["caption"] == "رد يدوي"
