@@ -228,8 +228,10 @@ def _comment_live_list(conn, client, graph_client_for, token, chat_id, rule_id):
     if row is None or graph_client_for is None:
         _send(client, token, chat_id, "القاعدة غير متاحة أو عميل Meta غير جاهز.", _menu())
         return
+    graph = None
     try:
-        comments, _ = graph_client_for("instagram").get_media_comments(str(row["media_id"]), row["access_token"], limit=25)
+        graph = graph_client_for("instagram")
+        comments, _ = graph.get_media_comments(str(row["media_id"]), row["access_token"], limit=25)
         lines = [f"💬 أحدث التعليقات للقاعدة #{rule_id}:"]
         for item in comments[:12]:
             author = (item.get("from") or {}).get("username") or item.get("username") or "مستخدم"
@@ -239,8 +241,8 @@ def _comment_live_list(conn, client, graph_client_for, token, chat_id, rule_id):
         _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[[{"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{rule_id}"}]]})
     except Exception as exc:
         from .redact import redact
-        graph = graph_client_for("instagram")
-        _send(client, token, chat_id, f"تعذر جلب التعليقات من Meta: {redact(str(exc))[:400]}\n{_comment_permission_hint(graph)}", _menu())
+        hint = _comment_permission_hint(graph) if graph is not None else "تعذر تهيئة عميل Meta."
+        _send(client, token, chat_id, f"تعذر جلب التعليقات من Meta: {redact(str(exc))[:400]}\n{hint}", _menu())
 
 def _dm_list(conn, client, graph_client_for, token, chat_id):
     channels = _connected_ig_channels(conn)
@@ -253,6 +255,7 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
     lines = ["✉️ محادثات Instagram الخاصة:"]
     keyboard = []
     for channel in channels:
+        graph = None
         try:
             graph = graph_client_for("instagram")
             messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(graph) else str(channel["linked_page_id"] or "")
@@ -273,7 +276,8 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
                                   "callback_data": f"bs:dm:view:{channel['id']}:{cid}"}])
         except Exception as exc:
             from .redact import redact
-            lines.append(f"تعذر جلب الرسائل: {redact(str(exc))[:220]}\n{_messaging_permission_hint(graph)}")
+            hint = _messaging_permission_hint(graph) if graph is not None else "تعذر تهيئة عميل Meta."
+            lines.append(f"تعذر جلب الرسائل: {redact(str(exc))[:220]}\n{hint}")
     keyboard.append([{"text": "↩ القائمة", "callback_data": "bs:menu"}])
     _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard": keyboard})
 
@@ -285,6 +289,7 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
     if channel is None or graph_client_for is None:
         _send(client, token, chat_id, "القناة غير متصلة أو صلاحية Meta غير متاحة.", _menu())
         return
+    graph = None
     try:
         graph = graph_client_for("instagram")
         messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(graph) else str(channel["linked_page_id"] or "")
@@ -316,7 +321,8 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
         ]})
     except Exception as exc:
         from .redact import redact
-        _send(client, token, chat_id, f"تعذر فتح المحادثة: {redact(str(exc))[:350]}\n{_messaging_permission_hint(graph)} قد تحتاج أيضاً مراجعة التطبيق لدى Meta.", _menu())
+        hint = _messaging_permission_hint(graph) if graph is not None else "تعذر تهيئة عميل Meta."
+        _send(client, token, chat_id, f"تعذر فتح المحادثة: {redact(str(exc))[:350]}\n{hint} قد تحتاج أيضاً مراجعة التطبيق لدى Meta.", _menu())
 
 
 def process_control_update(conn, config, client, update: dict, graph_client_for=None) -> bool:
@@ -696,10 +702,13 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                     raise RuntimeError("يلزم ربط صفحة Facebook لإرسال الرسائل عبر Facebook Login.")
                 result = graph.send_instagram_direct_message(
                     messaging_id, row["recipient_id"], row["message_text"], channel["access_token"])
+                meta_message_id = str(result.get("message_id") or result.get("id") or "")
+                if not meta_message_id:
+                    raise RuntimeError("Meta returned no message ID; delivery cannot be confirmed safely.")
                 with conn:
                     conn.execute("UPDATE telegram_dm_outbox SET status='sent',meta_message_id=?,updated_at=? WHERE id=?",
-                                 (str(result.get("message_id") or result.get("id") or ""), datetime.now(timezone.utc).isoformat(), outbox_id))
-                _send(client, token, chat_id, f"✅ أكدت Meta إرسال الرد بنجاح. رقم الرسالة: {result.get('message_id') or result.get('id') or 'غير متاح'}", _menu())
+                                 (meta_message_id, datetime.now(timezone.utc).isoformat(), outbox_id))
+                _send(client, token, chat_id, f"✅ أكدت Meta إرسال الرد بنجاح. رقم الرسالة: {meta_message_id}", _menu())
             except Exception as exc:
                 from .redact import redact
                 with conn:
