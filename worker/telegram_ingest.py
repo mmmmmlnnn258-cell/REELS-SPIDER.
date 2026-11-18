@@ -360,7 +360,13 @@ def run_forever(config, logger: logging.Logger, stop_event: threading.Event) -> 
                 for update in updates or []:
                     if stop_event.is_set():
                         break
-                    process_update(conn, config, client, update, logger)
+                    from .telegram_control import process_control_update
+                    if process_control_update(conn, config, client, update):
+                        message = update.get("message") or (update.get("callback_query") or {}).get("message") or {}
+                        chat = message.get("chat") or {}
+                        _record_update(conn, int(update["update_id"]), str(chat.get("id", "")) or None, "ignored")
+                    else:
+                        process_update(conn, config, client, update, logger)
             except TelegramAPIError as exc:
                 logger.error("Telegram polling failed: %s", exc)
                 stop_event.wait(5)

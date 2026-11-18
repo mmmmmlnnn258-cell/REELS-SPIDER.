@@ -82,12 +82,28 @@ class TelegramClient:
         target chat."""
         return self._call(token, "getChat", {"chat_id": chat_id})
 
-    def send_message(self, token: str, chat_id: str, text: str) -> dict:
-        return self._call(token, "sendMessage", {"chat_id": chat_id, "text": text})
+    def send_message(self, token: str, chat_id: str, text: str, reply_markup: dict | None = None) -> dict:
+        data = {"chat_id": chat_id, "text": text}
+        if reply_markup is not None:
+            data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+        return self._call(token, "sendMessage", data)
+
+    def answer_callback_query(self, token: str, callback_query_id: str, text: str | None = None) -> dict:
+        data = {"callback_query_id": callback_query_id}
+        if text:
+            data["text"] = text
+        return self._call(token, "answerCallbackQuery", data)
+
+    def edit_message_text(self, token: str, chat_id: str, message_id: int, text: str,
+                          reply_markup: dict | None = None) -> dict:
+        data = {"chat_id": chat_id, "message_id": int(message_id), "text": text}
+        if reply_markup is not None:
+            data["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+        return self._call(token, "editMessageText", data)
 
     def get_updates(self, token: str, offset: int | None = None, timeout: int = 20) -> list[dict]:
         """Long-poll incoming updates; HTTP timeout exceeds Telegram's poll timeout."""
-        data = {"timeout": int(timeout), "allowed_updates": json.dumps(["message", "channel_post"])}
+        data = {"timeout": int(timeout), "allowed_updates": json.dumps(["message", "channel_post", "callback_query"])}
         if offset is not None:
             data["offset"] = int(offset)
         return self._call(token, "getUpdates", data, request_timeout=int(timeout) + 15) or []
