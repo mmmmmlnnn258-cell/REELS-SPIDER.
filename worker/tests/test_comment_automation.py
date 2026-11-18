@@ -27,7 +27,7 @@ def database():
     conn.row_factory = sqlite3.Row
     conn.executescript("""
       CREATE TABLE channels(id INTEGER PRIMARY KEY, platform TEXT, is_active INTEGER,
-        access_token TEXT, remote_account_id TEXT, account_name TEXT);
+        access_token TEXT, remote_account_id TEXT, account_name TEXT, instagram_auth_method TEXT);
       CREATE TABLE instagram_comment_rules(id INTEGER PRIMARY KEY, channel_id INTEGER,
         media_id TEXT, keywords_json TEXT, link_url TEXT, private_reply_text TEXT,
         public_reply_text TEXT, enabled INTEGER, last_polled_at TEXT, last_error TEXT);
@@ -36,7 +36,7 @@ def database():
         private_reply_id TEXT, public_reply_id TEXT, last_error TEXT,
         created_at TEXT, updated_at TEXT);
     """)
-    conn.execute("INSERT INTO channels VALUES (1,'instagram',1,'token','ig-1','creator')")
+    conn.execute("INSERT INTO channels VALUES (1,'instagram',1,'token','ig-1','creator','instagram_login')")
     conn.execute("""INSERT INTO instagram_comment_rules
       VALUES (1,1,'reel-1',?,'https://example.com','Here {link}','Sent ❤️',1,NULL,NULL)""",
       (json.dumps(["تم", "الرابط"]),))
@@ -48,9 +48,11 @@ def test_keyword_comment_sends_one_private_and_public_reply():
     conn = database()
     client = FakeClient([{"id":"c1","text":"ارسل الرابط","timestamp":"2026-11-17T10:00:00+00:00",
                           "from":{"id":"person-1","username":"person"}}])
+    seen = []
     count = run_comment_automation(conn, None, datetime(2026,11,17,11,tzinfo=timezone.utc),
-                                   client_for=lambda _: client)
+                                   client_for=lambda channel: (seen.append(channel), client)[1])
     assert count == 1
+    assert seen[0]["instagram_auth_method"] == "instagram_login"
     assert client.private == [("ig-1","c1","Here https://example.com")]
     assert client.public == [("c1","Sent ❤️")]
     assert conn.execute("SELECT status FROM instagram_comment_events").fetchone()[0] == "sent"
