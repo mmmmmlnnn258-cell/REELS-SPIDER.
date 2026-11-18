@@ -1028,7 +1028,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 from .operation_log import record_control_operation
                 record_control_operation(
                     conn, int(update_id), "تعديل موعد",
-                    f"تم تعديل الموعد بالتوقيت المحلي {session['timezone']}.",
+                    f"تم تعديل الموعد إلى {_local_stamp(scheduled_utc.isoformat(), session['timezone'])} ({session['timezone']}).",
                     publication_id=int(session["publication_id"]), now=now_dt,
                 )
                 _send(client, token, chat_id,
