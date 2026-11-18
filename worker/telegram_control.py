@@ -28,6 +28,11 @@ def process_control_update(conn, config, client, update: dict) -> bool:
     """
     token = config.telegram_bot_token
     allowed = _allowed(config.telegram_allowed_chat_ids)
+    update_id = update.get("update_id")
+    if update_id is not None and conn.execute(
+        "SELECT 1 FROM telegram_ingest_updates WHERE update_id = ?", (int(update_id),)
+    ).fetchone():
+        return True
     callback = update.get("callback_query")
     if callback:
         message = callback.get("message") or {}
@@ -35,7 +40,10 @@ def process_control_update(conn, config, client, update: dict) -> bool:
         chat_id = str(chat.get("id", ""))
         query_id = str(callback.get("id", ""))
         data = str(callback.get("data", ""))
-        if not chat_id or chat_id not in allowed or chat.get("type") != "private":
+        sender = callback.get("from") or {}
+        sender_id = str(sender.get("id", ""))
+        if (not chat_id or chat_id not in allowed or chat.get("type") != "private"
+                or not sender_id or sender_id != chat_id):
             if query_id:
                 client.answer_callback_query(token, query_id, "غير مصرح")
             return True
@@ -60,9 +68,10 @@ def process_control_update(conn, config, client, update: dict) -> bool:
             return True
         if data == "bs:posts":
             rows = conn.execute(
-                """SELECT p.id, p.caption, p.status, p.scheduled_at
-                     FROM publications p WHERE p.status IN ('scheduled','failed','pending_approval')
-                    ORDER BY p.scheduled_at ASC, p.id ASC LIMIT 5"""
+                """SELECT pub.id, p.caption, pub.status, pub.scheduled_at
+                     FROM publications pub JOIN posts p ON p.id = pub.post_id
+                    WHERE pub.status IN ('scheduled','failed','pending_approval')
+                    ORDER BY pub.scheduled_at ASC, pub.id ASC LIMIT 5"""
             ).fetchall()
             if not rows:
                 body = "🗓 لا توجد منشورات مجدولة أو فاشلة حالياً."
@@ -107,9 +116,15 @@ def process_control_update(conn, config, client, update: dict) -> bool:
                 _send(client, token, chat_id, "قاعدة التعليقات غير موجودة أو القناة غير نشطة.", _menu())
                 return True
             new_value = 0 if row["enabled"] else 1
-            conn.execute("UPDATE instagram_comment_rules SET enabled=?, updated_at=? WHERE id=?",
-                         (new_value, datetime.now(timezone.utc).isoformat(), rule_id))
-            conn.commit()
+            with conn:
+                conn.execute("UPDATE instagram_comment_rules SET enabled=?, updated_at=? WHERE id=?",
+                             (new_value, datetime.now(timezone.utc).isoformat(), rule_id))
+                if update_id is not None:
+                    conn.execute(
+                        """INSERT OR IGNORE INTO telegram_ingest_updates
+                           (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
+                        (int(update_id), chat_id),
+                    )
             _send(client, token, chat_id,
                   f"{'تم تشغيل' if new_value else 'تم إيقاف'} أتمتة التعليقات للقاعدة #{rule_id}.",
                   _menu())
@@ -125,7 +140,10 @@ def process_control_update(conn, config, client, update: dict) -> bool:
         return False  # preserve the existing /start chat-ID discovery flow
     chat = message.get("chat") or {}
     chat_id = str(chat.get("id", ""))
-    if not chat_id or chat_id not in allowed or chat.get("type") != "private":
+    sender = message.get("from") or {}
+    sender_id = str(sender.get("id", ""))
+    if (not chat_id or chat_id not in allowed or chat.get("type") != "private"
+            or not sender_id or sender_id != chat_id):
         return True
     _send(client, token, chat_id, "🕷 BLACK SPIDER\nلوحة التحكم الرئيسية:", _menu())
     return True
