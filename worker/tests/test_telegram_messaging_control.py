@@ -145,6 +145,40 @@ def test_dm_confirmation_is_idempotent_and_never_resends(conn, config):
     assert conn.execute("SELECT status FROM telegram_dm_outbox WHERE id=?", (outbox,)).fetchone()[0] == "sent"
 
 
+def test_dm_cancel_marks_preview_final_and_old_confirm_cannot_send(conn, config):
+    channel = connected_channel(conn)
+    now = "2026-11-18T12:00:00+00:00"
+    outbox = conn.execute(
+        """INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,
+             message_text,status,created_at,updated_at)
+           VALUES('7441755677',?,'9001','person-77','hello','pending',?,?)""",
+        (channel, now, now),
+    ).lastrowid
+    conn.commit()
+    graph = FakeGraph()
+    client = FakeTelegram()
+    process_control_update(conn, cfg(config), client, cb(201, f"bs:dm:cancel:{outbox}"), lambda _: graph)
+    assert conn.execute("SELECT status FROM telegram_dm_outbox WHERE id=?", (outbox,)).fetchone()[0] == "cancelled"
+    process_control_update(conn, cfg(config), client, cb(202, f"bs:dm:send:{outbox}"), lambda _: graph)
+    assert graph.sent == []
+    assert conn.execute("SELECT status FROM telegram_dm_outbox WHERE id=?", (outbox,)).fetchone()[0] == "cancelled"
+
+
+def test_menu_command_cancels_pending_dm_previews(conn, config):
+    channel = connected_channel(conn)
+    now = "2026-11-18T12:00:00+00:00"
+    outbox = conn.execute(
+        """INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,
+             message_text,status,created_at,updated_at)
+           VALUES('7441755677',?,'9001','person-77','hello','pending',?,?)""",
+        (channel, now, now),
+    ).lastrowid
+    conn.commit()
+    client = FakeTelegram()
+    process_control_update(conn, cfg(config), client, msg(203, "/menu"))
+    assert conn.execute("SELECT status FROM telegram_dm_outbox WHERE id=?", (outbox,)).fetchone()[0] == "cancelled"
+
+
 def test_dm_meta_failure_is_marked_unknown_and_not_retried(conn, config):
     channel = connected_channel(conn)
     now = "2026-11-18T12:00:00+00:00"
