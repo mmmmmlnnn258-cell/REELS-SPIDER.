@@ -450,7 +450,7 @@ def run_media_sync(conn, config, client=None, now=None, logger=None, client_for=
     Signature mirrors run_metrics: `client_for` resolves the right Graph host per
     platform, falling back to a single shared client when a caller has only one.
     """
-    pick_client = client_for or (lambda _platform: client)
+    pick_client = client_for or (lambda _channel: client)
     budget = CallBudget(config.insights_max_calls_per_cycle, config.insights_usage_pct_ceiling)
     rows = conn.execute("SELECT * FROM channels WHERE is_active = 1").fetchall()
     synced = 0
@@ -464,7 +464,7 @@ def run_media_sync(conn, config, client=None, now=None, logger=None, client_for=
             continue
         client_obj = None
         try:
-            client_obj = pick_client(channel["platform"])
+            client_obj = pick_client(channel)
             sync_channel_media(conn, config, client_obj, channel, now, budget, logger=logger)
             synced += 1
         except Exception as exc:  # noqa: BLE001 — one bad channel must not stop the rest
