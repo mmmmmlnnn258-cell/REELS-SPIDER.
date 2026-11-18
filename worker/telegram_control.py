@@ -121,6 +121,8 @@ def process_control_update(conn, config, client, update: dict) -> bool:
     text = str(message.get("text") or "").strip().split("@", 1)[0]
     if text not in {"/start", "/menu"}:
         return False
+    if not allowed:
+        return False  # preserve the existing /start chat-ID discovery flow
     chat = message.get("chat") or {}
     chat_id = str(chat.get("id", ""))
     if not chat_id or chat_id not in allowed or chat.get("type") != "private":
