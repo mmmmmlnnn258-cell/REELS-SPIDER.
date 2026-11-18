@@ -42,11 +42,14 @@ def _notify_once(conn, row, config, logger=None):
     if status == "dry_run":
         return
     icon = "✅" if status == "success" else ("⚠️" if status == "retrying" else "❌")
-    heading = {
-        "success": "تم النشر بنجاح",
-        "retrying": "تعذرت محاولة النشر — ستتم إعادة المحاولة",
-        "failed": "فشل النشر نهائياً",
-    }.get(status, "تحديث عملية")
+    heading = (
+        "تم تسليم الفيديو إلى صندوق النشر؛ لم يتم نشره على الحساب بعد"
+        if row["event_type"] == "تسليم لصندوق النشر" else {
+            "success": "تم النشر بنجاح",
+            "retrying": "تعذرت محاولة النشر — ستتم إعادة المحاولة",
+            "failed": "فشل النشر نهائياً",
+        }.get(status, "تحديث عملية")
+    )
     caption = (row["caption"] or "بدون وصف").replace("\\n", " ")[:180]
     message = (
         f"{icon} BLACK SPIDER\n{heading}\n"
