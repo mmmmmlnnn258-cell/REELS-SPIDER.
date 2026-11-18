@@ -300,3 +300,42 @@ def test_dm_inbox_supports_opaque_meta_conversation_ids(conn, config):
     assert conn.execute(
         "SELECT conversation_id FROM telegram_dm_reply_sessions WHERE chat_id='7441755677'"
     ).fetchone()[0] == "t_opaque-conversation_abc-123"
+
+
+def test_telegram_ack_failure_does_not_downgrade_meta_confirmed_dm(conn, config):
+    channel = connected_channel(conn)
+    now = datetime.now(timezone.utc).isoformat()
+    outbox = conn.execute(
+        """INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,
+             message_text,status,created_at,updated_at)
+           VALUES('7441755677',?,'conversation-1','person-77','رد مؤكد','pending',?,?)""",
+        (channel, now, now),
+    ).lastrowid
+    conn.commit()
+
+    class BrokenAcknowledgementTelegram(FakeTelegram):
+        def send_message(self, token, chat_id, text, reply_markup=None):
+            raise RuntimeError("Telegram acknowledgement unavailable")
+
+    client = BrokenAcknowledgementTelegram()
+    graph = FakeGraph()
+    try:
+        process_control_update(
+            conn, cfg(config), client, cb(400, f"bs:dm:send:{outbox}"),
+            lambda platform: graph,
+        )
+    except RuntimeError as exc:
+        assert "Telegram acknowledgement unavailable" in str(exc)
+    else:
+        raise AssertionError("the fake Telegram acknowledgement should fail")
+
+    row = conn.execute(
+        "SELECT status,meta_message_id FROM telegram_dm_outbox WHERE id=?", (outbox,)
+    ).fetchone()
+    assert row["status"] == "sent"
+    assert row["meta_message_id"] == "meta-msg-1"
+    event = conn.execute(
+        "SELECT status,notified_at FROM telegram_operation_log WHERE event_type='رسالة خاصة يدوية'"
+    ).fetchone()
+    assert event["status"] == "success"
+    assert event["notified_at"] is None
