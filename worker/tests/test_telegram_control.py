@@ -231,3 +231,32 @@ def test_publish_now_rejects_unconnected_or_non_scheduled_publication(conn, conf
     assert row["status"] == "pending_approval"
     assert row["scheduled_at"] == "2099-01-01T12:00:00Z"
     assert "لم يتم تقديم المنشور" in client.messages[0][1]
+
+
+
+def test_publish_now_clears_retry_backoff(conn, config):
+    channel = conn.execute(
+        """INSERT INTO channels(platform, account_name, remote_account_id, access_token, is_active)
+           VALUES ('instagram', 'connected', 'ig-1', 'secret', 1)"""
+    ).lastrowid
+    post = conn.execute(
+        "INSERT INTO posts(caption, post_type, status) VALUES ('Retry caption', 'reel', 'scheduled')"
+    ).lastrowid
+    publication = conn.execute(
+        """INSERT INTO publications(post_id, channel_id, scheduled_at, next_retry_at, status)
+           VALUES (?, ?, '2099-01-01T12:00:00Z', '2099-01-02T12:00:00Z', 'scheduled')""",
+        (post, channel),
+    ).lastrowid
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), client,
+        callback(update_id=904, data=f"bs:publish:{publication}"),
+    )
+    row = conn.execute(
+        "SELECT scheduled_at, next_retry_at, status FROM publications WHERE id=?",
+        (publication,),
+    ).fetchone()
+    assert row["status"] == "scheduled"
+    assert row["scheduled_at"] < "2099-01-01T12:00:00Z"
+    assert row["next_retry_at"] is None
