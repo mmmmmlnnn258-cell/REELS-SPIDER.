@@ -1,7 +1,9 @@
 """Allow-listed Telegram control menu for safe, read-only operations and comment-rule toggles."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import re
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def _allowed(raw: str) -> set[str]:
@@ -11,6 +13,7 @@ def _allowed(raw: str) -> set[str]:
 def _menu() -> dict:
     return {"inline_keyboard": [
         [{"text": "🚀 نشر الآن", "callback_data": "bs:publish"}],
+        [{"text": "📅 إدارة الجدولة", "callback_data": "bs:schedule"}],
         [{"text": "📊 حالة النظام", "callback_data": "bs:status"},
          {"text": "🗓 المنشورات القادمة", "callback_data": "bs:posts"}],
         [{"text": "💬 أتمتة التعليقات", "callback_data": "bs:comments"}],
@@ -19,6 +22,117 @@ def _menu() -> dict:
 
 def _send(client, token: str, chat_id: str, text: str, keyboard: dict | None = None):
     return client.send_message(token, chat_id, text, reply_markup=keyboard)
+
+
+def _local_stamp(value: str, timezone_name: str) -> str:
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        zone = ZoneInfo(timezone_name)
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        return stamp.astimezone(zone).strftime("%Y-%m-%d %H:%M")
+    except (ValueError, ZoneInfoNotFoundError):
+        return value
+
+
+def _parse_local_schedule(value: str, timezone_name: str) -> datetime:
+    if not re.fullmatch(r"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}", value):
+        raise ValueError("اكتب التاريخ والوقت بهذا الشكل بالضبط: YYYY-MM-DD HH:MM")
+    try:
+        local = datetime.strptime(value, "%Y-%m-%d %H:%M")
+        zone = ZoneInfo(timezone_name)
+    except (ValueError, ZoneInfoNotFoundError):
+        raise ValueError("التاريخ أو المنطقة الزمنية غير صالحة. أرسل موعداً صحيحاً.") from None
+    first = local.replace(tzinfo=zone, fold=0)
+    round_trip = first.astimezone(timezone.utc).astimezone(zone).replace(tzinfo=None)
+    if round_trip != local:
+        raise ValueError("هذا الوقت غير موجود في المنطقة الزمنية بسبب تغيير الساعة. اختر وقتاً آخر.")
+    second = local.replace(tzinfo=zone, fold=1)
+    if first.utcoffset() != second.utcoffset():
+        second_round_trip = second.astimezone(timezone.utc).astimezone(zone).replace(tzinfo=None)
+        if second_round_trip == local:
+            raise ValueError("هذا الوقت يتكرر بسبب تغيير الساعة. اختر وقتاً غير ملتبس.")
+    result = first.astimezone(timezone.utc)
+    if result <= datetime.now(timezone.utc):
+        raise ValueError("الموعد الجديد يجب أن يكون في المستقبل.")
+    return result
+
+
+def _schedule_rows(conn):
+    return conn.execute(
+        """SELECT pub.id, pub.status, pub.scheduled_at, pub.is_held,
+                  p.caption, p.post_type, c.account_name, c.timezone
+             FROM publications pub
+             JOIN posts p ON p.id = pub.post_id
+             JOIN channels c ON c.id = pub.channel_id
+            WHERE pub.status IN ('scheduled', 'pending_approval')
+            ORDER BY pub.scheduled_at ASC, pub.id ASC LIMIT 8"""
+    ).fetchall()
+
+
+def _schedule_list(conn, client, token: str, chat_id: str):
+    rows = _schedule_rows(conn)
+    if not rows:
+        _send(client, token, chat_id, "📅 لا توجد منشورات مجدولة حالياً.", {
+            "inline_keyboard": [[{"text": "↩ القائمة", "callback_data": "bs:menu"}]]
+        })
+        return
+    lines = ["📅 المنشورات المجدولة الحالية:"]
+    keyboard = []
+    for row in rows:
+        caption = (row["caption"] or "بدون وصف").replace("\\n", " ")[:48]
+        local_time = _local_stamp(row["scheduled_at"], row["timezone"])
+        state = "موقوف مؤقتاً" if row["is_held"] else (
+            "بانتظار الموافقة" if row["status"] == "pending_approval" else "مجدول"
+        )
+        lines.append(f"#{row['id']} · {local_time} ({row['timezone']}) · {state}\\n{caption}")
+        keyboard.append([{"text": f"تفاصيل المنشور #{row['id']}", "callback_data": f"bs:schedule:view:{row['id']}"}])
+    keyboard.append([{"text": "↩ القائمة", "callback_data": "bs:menu"}])
+    _send(client, token, chat_id, "\\n".join(lines), {"inline_keyboard": keyboard})
+
+
+def _schedule_detail(conn, client, token: str, chat_id: str, publication_id: int):
+    row = conn.execute(
+        """SELECT pub.id, pub.status, pub.scheduled_at, pub.is_held, pub.post_id,
+                  p.caption, p.post_type, c.account_name, c.timezone
+             FROM publications pub
+             JOIN posts p ON p.id = pub.post_id
+             JOIN channels c ON c.id = pub.channel_id
+            WHERE pub.id = ? AND pub.status IN ('scheduled', 'pending_approval')""",
+        (publication_id,),
+    ).fetchone()
+    if row is None:
+        _send(client, token, chat_id, "هذا الموعد لم يعد مجدولاً.", {
+            "inline_keyboard": [[{"text": "↩ إدارة الجدولة", "callback_data": "bs:schedule"}]]
+        })
+        return
+    assets = conn.execute(
+        """SELECT a.original_filename, a.media_kind, a.byte_size
+             FROM post_assets pa JOIN assets a ON a.id = pa.asset_id
+            WHERE pa.post_id = ? ORDER BY pa.sort_order, pa.id""",
+        (row["post_id"],),
+    ).fetchall()
+    caption = (row["caption"] or "بدون وصف").strip()[:1200]
+    media = [f"• {a['original_filename'] or a['media_kind']} ({a['media_kind']})" for a in assets]
+    status = "موقوف مؤقتاً" if row["is_held"] else (
+        "بانتظار الموافقة" if row["status"] == "pending_approval" else "مجدول"
+    )
+    body = (
+        f"📄 تفاصيل المنشور #{row['id']}\\n"
+        f"القناة: {row['account_name']}\\n"
+        f"النوع: {row['post_type']}\\n"
+        f"الحالة: {status}\\n"
+        f"الموعد: {_local_stamp(row['scheduled_at'], row['timezone'])} ({row['timezone']})\\n"
+        f"الوسائط: {len(assets)} ملف\\n"
+        f"الوصف: {caption}\\n"
+        + ("الملفات:\\n" + "\\n".join(media) if media else "لا توجد ملفات وسائط مرتبطة.")
+    )
+    keyboard = {"inline_keyboard": [
+        [{"text": "🕒 تأجيل الموعد", "callback_data": f"bs:schedule:reschedule:{publication_id}"}],
+        [{"text": "📝 إلغاء الجدولة وتحويل لمسودة", "callback_data": f"bs:schedule:cancel:{publication_id}"}],
+        [{"text": "↩ قائمة الجدولة", "callback_data": "bs:schedule"}],
+    ]}
+    _send(client, token, chat_id, body, keyboard)
 
 
 def process_control_update(conn, config, client, update: dict) -> bool:
@@ -83,6 +197,92 @@ def process_control_update(conn, config, client, update: dict) -> bool:
                     lines.append(f"#{row['id']} · {row['status']} · {row['scheduled_at']}\n{caption}")
                 body = "\n".join(lines)
             _send(client, token, chat_id, body, _menu())
+            return True
+
+        if data == "bs:schedule":
+            _schedule_list(conn, client, token, chat_id)
+            return True
+        if data.startswith("bs:schedule:view:"):
+            raw_id = data.removeprefix("bs:schedule:view:")
+            if not raw_id.isdigit() or len(raw_id) > 9:
+                _send(client, token, chat_id, "رقم منشور غير صالح.", _menu())
+                return True
+            _schedule_detail(conn, client, token, chat_id, int(raw_id))
+            return True
+        if data.startswith("bs:schedule:reschedule:"):
+            raw_id = data.removeprefix("bs:schedule:reschedule:")
+            if not raw_id.isdigit() or len(raw_id) > 9:
+                _send(client, token, chat_id, "رقم منشور غير صالح.", _menu())
+                return True
+            publication_id = int(raw_id)
+            row = conn.execute(
+                """SELECT c.timezone FROM publications pub
+                     JOIN channels c ON c.id = pub.channel_id
+                    WHERE pub.id = ? AND pub.status IN ('scheduled', 'pending_approval')""",
+                (publication_id,),
+            ).fetchone()
+            if row is None:
+                _send(client, token, chat_id, "هذا الموعد لم يعد قابلاً للتأجيل.", _menu())
+                return True
+            now = datetime.now(timezone.utc).isoformat()
+            with conn:
+                conn.execute(
+                    """INSERT INTO telegram_schedule_sessions(chat_id, publication_id, timezone, created_at)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(chat_id) DO UPDATE SET
+                         publication_id=excluded.publication_id,
+                         timezone=excluded.timezone, created_at=excluded.created_at""",
+                    (chat_id, publication_id, row["timezone"], now),
+                )
+                conn.execute(
+                    """INSERT OR IGNORE INTO telegram_ingest_updates
+                       (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
+                    (int(update_id), chat_id),
+                )
+            _send(client, token, chat_id,
+                  f"أرسل الموعد الجديد بالتوقيت المحلي للقناة ({row['timezone']}) بهذا الشكل:\\nYYYY-MM-DD HH:MM\\nمثال: 2026-12-01 18:30\\nلديك 20 دقيقة لإرسال الموعد. أرسل /menu للإلغاء.",
+                  {"inline_keyboard": [[{"text": "↩ إلغاء التأجيل", "callback_data": "bs:schedule"}]]})
+            return True
+        if data.startswith("bs:schedule:cancel:"):
+            raw_id = data.removeprefix("bs:schedule:cancel:")
+            if not raw_id.isdigit() or len(raw_id) > 9:
+                _send(client, token, chat_id, "رقم منشور غير صالح.", _menu())
+                return True
+            publication_id = int(raw_id)
+            now = datetime.now(timezone.utc).isoformat()
+            with conn:
+                changed = conn.execute(
+                    """UPDATE publications
+                          SET status='canceled', next_retry_at=NULL, updated_at=?
+                        WHERE id=? AND status IN ('scheduled', 'pending_approval')""",
+                    (now, publication_id),
+                )
+                if changed.rowcount == 1:
+                    post_id = conn.execute(
+                        "SELECT post_id FROM publications WHERE id=?", (publication_id,)
+                    ).fetchone()["post_id"]
+                    conn.execute(
+                        """UPDATE posts SET status='draft', updated_at=?
+                            WHERE id=? AND NOT EXISTS (
+                              SELECT 1 FROM publications other
+                               WHERE other.post_id=posts.id
+                                 AND other.status IN ('scheduled','pending_approval','publishing','posted')
+                            )""",
+                        (now, post_id),
+                    )
+                conn.execute(
+                    """INSERT OR IGNORE INTO telegram_ingest_updates
+                       (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
+                    (int(update_id), chat_id),
+                )
+                conn.execute("DELETE FROM telegram_schedule_sessions WHERE chat_id=?", (chat_id,))
+            if changed.rowcount == 1:
+                _send(client, token, chat_id,
+                      f"تم إلغاء جدولة المنشور #{publication_id}. لم نحذف المنشور أو أي ملف وسائط. إذا لم تكن له مواعيد أخرى نشطة فستصبح حالته مسودة.",
+                      {"inline_keyboard": [[{"text": "📅 إدارة الجدولة", "callback_data": "bs:schedule"}],
+                                           [{"text": "↩ القائمة", "callback_data": "bs:menu"}]]})
+            else:
+                _send(client, token, chat_id, "لم يتم الإلغاء: الموعد لم يعد مجدولاً أو ينتظر الموافقة.", _menu())
             return True
         if data == "bs:publish":
             rows = conn.execute(
@@ -200,6 +400,62 @@ def process_control_update(conn, config, client, update: dict) -> bool:
             return True
         _send(client, token, chat_id, "زر غير معروف. افتح القائمة من جديد.", _menu())
         return True
+
+
+    message = update.get("message") or {}
+    chat = message.get("chat") or {}
+    chat_id = str(chat.get("id", ""))
+    sender = message.get("from") or {}
+    sender_id = str(sender.get("id", ""))
+    if chat_id and chat_id in allowed and chat.get("type") == "private" and sender_id == chat_id:
+        session = conn.execute(
+            "SELECT publication_id, timezone, created_at FROM telegram_schedule_sessions WHERE chat_id=?",
+            (chat_id,),
+        ).fetchone()
+        if session:
+            now_dt = datetime.now(timezone.utc)
+            try:
+                created = datetime.fromisoformat(session["created_at"].replace("Z", "+00:00"))
+            except ValueError:
+                created = now_dt - timedelta(hours=1)
+            if now_dt - created > timedelta(minutes=20):
+                with conn:
+                    conn.execute("DELETE FROM telegram_schedule_sessions WHERE chat_id=?", (chat_id,))
+                _send(client, token, chat_id, "انتهت مهلة التأجيل. افتح إدارة الجدولة وابدأ من جديد.", _menu())
+                return True
+            raw_text = str(message.get("text") or "").strip()
+            if raw_text in {"/menu", "/start"}:
+                with conn:
+                    conn.execute("DELETE FROM telegram_schedule_sessions WHERE chat_id=?", (chat_id,))
+                _send(client, token, chat_id, "تم إلغاء إدخال الموعد.", _menu())
+                return True
+            try:
+                scheduled_utc = _parse_local_schedule(raw_text, session["timezone"])
+            except ValueError as exc:
+                _send(client, token, chat_id, str(exc) + "\\nحاول مرة أخرى، أو أرسل /menu للإلغاء.")
+                return True
+            now = now_dt.isoformat()
+            with conn:
+                changed = conn.execute(
+                    """UPDATE publications
+                          SET scheduled_at=?, next_retry_at=NULL, updated_at=?
+                        WHERE id=? AND status IN ('scheduled','pending_approval')""",
+                    (scheduled_utc.isoformat(), now, int(session["publication_id"])),
+                )
+                conn.execute("DELETE FROM telegram_schedule_sessions WHERE chat_id=?", (chat_id,))
+                conn.execute(
+                    """INSERT OR IGNORE INTO telegram_ingest_updates
+                       (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
+                    (int(update_id), chat_id),
+                )
+            if changed.rowcount == 1:
+                _send(client, token, chat_id,
+                      f"تم تأجيل المنشور #{session['publication_id']} إلى {_local_stamp(scheduled_utc.isoformat(), session['timezone'])} ({session['timezone']}). لم يتغير المنشور أو ملفاته.",
+                      {"inline_keyboard": [[{"text": "📅 إدارة الجدولة", "callback_data": "bs:schedule"}],
+                                           [{"text": "↩ القائمة", "callback_data": "bs:menu"}]]})
+            else:
+                _send(client, token, chat_id, "لم يتم تغيير الموعد؛ المنشور لم يعد مجدولاً أو ينتظر الموافقة.", _menu())
+            return True
 
     message = update.get("message") or {}
     text = str(message.get("text") or "").strip().split("@", 1)[0]
