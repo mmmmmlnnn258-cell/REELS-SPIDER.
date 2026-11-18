@@ -16,21 +16,25 @@ export function ChannelCredentials({
   channelId,
   platform,
   remoteAccountId,
+  instagramAuthMethod,
 }: {
   channelId: number;
   platform: string;
   remoteAccountId: string | null;
+  instagramAuthMethod: "legacy" | "facebook_login" | "instagram_login";
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [accountId, setAccountId] = useState(remoteAccountId ?? "");
   const [token, setToken] = useState("");
+  const [authMethod, setAuthMethod] = useState(instagramAuthMethod);
   const [pending, startT] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
 
   async function save() {
     setMsg(null);
     const body: Record<string, string> = { remote_account_id: accountId.trim() };
+    if (platform === "instagram") body.instagram_auth_method = authMethod;
     // Only send the token if they typed a new one (leave it untouched otherwise).
     if (token.trim()) body.access_token = token.trim();
     const res = await fetch(`/api/channels/${channelId}`, {
@@ -72,6 +76,25 @@ export function ChannelCredentials({
 
       {open ? (
         <div className="mt-3 space-y-2.5">
+          {platform === "instagram" ? (
+            <label className="block text-xs text-ink-soft">
+              <span className="mb-1 block">Instagram login method</span>
+              <select
+                className={field}
+                value={authMethod}
+                onChange={(e) =>
+                  setAuthMethod(e.target.value as typeof authMethod)
+                }
+              >
+                <option value="legacy">Legacy — follow META_GRAPH_BASE</option>
+                <option value="facebook_login">Facebook Login — Page token</option>
+                <option value="instagram_login">Instagram Login — Instagram user token</option>
+              </select>
+              <span className="mt-1 block text-[11px] text-muted">
+                Changing this changes the API host and token lifecycle. Reconnect with Instagram OAuth when selecting Instagram Login.
+              </span>
+            </label>
+          ) : null}
           {usesAccountId(platform) ? (
             <label className="block text-xs text-ink-soft">
               <span className="mb-1 block">
