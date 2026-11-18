@@ -27,6 +27,16 @@ def _send(client, token: str, chat_id: str, text: str, keyboard: dict | None = N
     return client.send_message(token, chat_id, text, reply_markup=keyboard)
 
 
+def _session_expired(created_at: str, minutes: int = 20) -> bool:
+    try:
+        created = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return True
+    return datetime.now(timezone.utc) - created > timedelta(minutes=minutes)
+
+
 def _local_stamp(value: str, timezone_name: str) -> str:
     try:
         stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -323,6 +333,9 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
         if data == "bs:menu":
             with conn:
                 conn.execute("DELETE FROM telegram_schedule_sessions WHERE chat_id=?", (chat_id,))
+                conn.execute("DELETE FROM telegram_comment_edit_sessions WHERE chat_id=?", (chat_id,))
+                conn.execute("DELETE FROM telegram_dm_reply_sessions WHERE chat_id=?", (chat_id,))
+                conn.execute("UPDATE telegram_dm_outbox SET status='cancelled',updated_at=? WHERE chat_id=? AND status='pending'", (datetime.now(timezone.utc).isoformat(), chat_id))
                 conn.execute(
                     """INSERT OR IGNORE INTO telegram_ingest_updates
                        (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
@@ -608,11 +621,29 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 _dm_view(conn, client, graph_client_for, token, chat_id, int(parts[3]), parts[4])
             return True
         if data == "bs:dm:compose":
-            exists = conn.execute("SELECT 1 FROM telegram_dm_reply_sessions WHERE chat_id=?", (chat_id,)).fetchone()
-            if exists:
+            session = conn.execute("SELECT created_at FROM telegram_dm_reply_sessions WHERE chat_id=?", (chat_id,)).fetchone()
+            if session and not _session_expired(session["created_at"]):
                 _send(client, token, chat_id, "اكتب نص الرد الآن. لن يُرسل حتى تراجع المعاينة وتضغط «تأكيد وإرسال». أرسل /menu للإلغاء.")
             else:
+                with conn:
+                    conn.execute("DELETE FROM telegram_dm_reply_sessions WHERE chat_id=?", (chat_id,))
                 _send(client, token, chat_id, "انتهت جلسة المحادثة. افتحها من صندوق الرسائل مجدداً.", _menu())
+            return True
+        if data.startswith("bs:dm:cancel:"):
+            raw_id = data.removeprefix("bs:dm:cancel:")
+            if not raw_id.isdigit() or len(raw_id) > 9:
+                _send(client, token, chat_id, "معرّف الإلغاء غير صالح.", _menu())
+                return True
+            with conn:
+                canceled = conn.execute(
+                    "UPDATE telegram_dm_outbox SET status='cancelled',updated_at=? "
+                    "WHERE id=? AND chat_id=? AND status='pending'",
+                    (datetime.now(timezone.utc).isoformat(), int(raw_id), chat_id),
+                )
+            if canceled.rowcount == 1:
+                _send(client, token, chat_id, "تم إلغاء الرد. لن يمكن إرساله من زر التأكيد القديم.", _menu())
+            else:
+                _send(client, token, chat_id, "هذا الرد لم يعد معلّقاً؛ لم يتم إرسال أي طلب جديد.", _menu())
             return True
         if data.startswith("bs:dm:send:"):
             raw_id = data.removeprefix("bs:dm:send:")
@@ -739,14 +770,26 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
     sender = message.get("from") or {}
     sender_id = str(sender.get("id", ""))
     if chat_id and chat_id in allowed and chat.get("type") == "private" and sender_id == chat_id:
-        edit_session = conn.execute("SELECT rule_id, field FROM telegram_comment_edit_sessions WHERE chat_id=?", (chat_id,)).fetchone()
-        dm_session = conn.execute("SELECT channel_id, conversation_id, recipient_id FROM telegram_dm_reply_sessions WHERE chat_id=?", (chat_id,)).fetchone()
+        edit_session = conn.execute("SELECT rule_id, field, created_at FROM telegram_comment_edit_sessions WHERE chat_id=?", (chat_id,)).fetchone()
+        dm_session = conn.execute("SELECT channel_id, conversation_id, recipient_id, created_at FROM telegram_dm_reply_sessions WHERE chat_id=?", (chat_id,)).fetchone()
         incoming_text = str(message.get("text") or "").strip()
-        if incoming_text in {"/menu", "/start"} and (edit_session or dm_session):
+        if incoming_text in {"/menu", "/start"}:
             with conn:
                 conn.execute("DELETE FROM telegram_comment_edit_sessions WHERE chat_id=?", (chat_id,))
                 conn.execute("DELETE FROM telegram_dm_reply_sessions WHERE chat_id=?", (chat_id,))
-            _send(client, token, chat_id, "تم إلغاء العملية الحالية.", _menu())
+                conn.execute("DELETE FROM telegram_schedule_sessions WHERE chat_id=?", (chat_id,))
+                conn.execute("UPDATE telegram_dm_outbox SET status='cancelled',updated_at=? WHERE chat_id=? AND status='pending'", (datetime.now(timezone.utc).isoformat(), chat_id))
+            _send(client, token, chat_id, "تم إلغاء العملية الحالية وأي معاينات رد معلّقة.", _menu())
+            return True
+        if edit_session and _session_expired(edit_session["created_at"]):
+            with conn:
+                conn.execute("DELETE FROM telegram_comment_edit_sessions WHERE chat_id=?", (chat_id,))
+            _send(client, token, chat_id, "انتهت مهلة تعديل الرد. ابدأ التعديل من تفاصيل القاعدة مجدداً.", _menu())
+            return True
+        if dm_session and _session_expired(dm_session["created_at"]):
+            with conn:
+                conn.execute("DELETE FROM telegram_dm_reply_sessions WHERE chat_id=?", (chat_id,))
+            _send(client, token, chat_id, "انتهت مهلة كتابة الرد. افتح المحادثة مجدداً قبل كتابة رد جديد.", _menu())
             return True
         if edit_session:
             if not incoming_text or len(incoming_text) > 2200:
@@ -766,7 +809,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 cur = conn.execute("INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,message_text,status,created_at,updated_at) VALUES(?,?,?,?,?,'pending',?,?)", (chat_id, dm_session["channel_id"], dm_session["conversation_id"], dm_session["recipient_id"], incoming_text, now, now))
                 outbox_id = cur.lastrowid
                 conn.execute("DELETE FROM telegram_dm_reply_sessions WHERE chat_id=?", (chat_id,))
-            _send(client, token, chat_id, "معاينة الرد:\n\n" + incoming_text + "\n\nلم تُرسل الرسالة بعد. راجع النص ثم أكد.", {"inline_keyboard":[[{"text":"✅ تأكيد وإرسال","callback_data":f"bs:dm:send:{outbox_id}"}],[{"text":"❌ إلغاء","callback_data":"bs:menu"}]]})
+            _send(client, token, chat_id, "معاينة الرد:\n\n" + incoming_text + "\n\nلم تُرسل الرسالة بعد. راجع النص ثم أكد.", {"inline_keyboard":[[{"text":"✅ تأكيد وإرسال","callback_data":f"bs:dm:send:{outbox_id}"}],[{"text":"❌ إلغاء","callback_data":f"bs:dm:cancel:{outbox_id}"}]]})
             return True
         session = conn.execute(
             "SELECT publication_id, timezone, created_at FROM telegram_schedule_sessions WHERE chat_id=?",
