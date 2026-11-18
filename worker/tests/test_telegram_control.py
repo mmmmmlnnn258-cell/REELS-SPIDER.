@@ -22,10 +22,10 @@ def cfg(config, allowed="7441755677"):
                    telegram_allowed_chat_ids=allowed)
 
 
-def callback(update_id=1, chat_id=7441755677, data="bs:menu", chat_type="private"):
+def callback(update_id=1, chat_id=7441755677, data="bs:menu", chat_type="private", sender_id=None):
     return {"update_id": update_id, "callback_query": {
         "id": f"cb-{update_id}", "data": data,
-        "from": {"id": chat_id},
+        "from": {"id": chat_id if sender_id is None else sender_id},
         "message": {"message_id": 10, "chat": {"id": chat_id, "type": chat_type}},
     }}
 
@@ -33,7 +33,8 @@ def callback(update_id=1, chat_id=7441755677, data="bs:menu", chat_type="private
 def test_start_sends_menu_only_to_allowlisted_private_chat(conn, config):
     client = FakeTelegram()
     update = {"update_id": 1, "message": {
-        "text": "/start", "chat": {"id": 7441755677, "type": "private"}}}
+        "text": "/start", "from": {"id": 7441755677},
+        "chat": {"id": 7441755677, "type": "private"}}}
     assert process_control_update(conn, cfg(config), client, update)
     assert client.messages[0][0] == "7441755677"
     assert client.messages[0][2]["inline_keyboard"]
@@ -88,6 +89,57 @@ def test_comment_rule_toggle_changes_only_selected_active_instagram_rule(conn, c
 def test_start_without_allowlist_preserves_chat_id_discovery(conn, config):
     client = FakeTelegram()
     update = {"update_id": 1, "message": {
-        "text": "/start", "chat": {"id": 42, "type": "private"}}}
+        "text": "/start", "from": {"id": 42},
+        "chat": {"id": 42, "type": "private"}}}
     assert process_control_update(conn, cfg(config, allowed=""), client, update) is False
     assert client.messages == []
+
+
+def test_callback_rejects_allowlisted_chat_when_sender_is_not_that_user(conn, config):
+    client = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), client,
+        callback(chat_id=7441755677, sender_id=999, data="bs:comment:1"),
+    )
+    assert client.messages == []
+    assert client.answered == [("cb-1", "غير مصرح")]
+
+
+def test_posts_callback_joins_caption_from_posts_table(conn, config):
+    channel = conn.execute(
+        """INSERT INTO channels(platform, account_name)
+           VALUES ('instagram', 'test')"""
+    ).lastrowid
+    post = conn.execute(
+        """INSERT INTO posts(caption, post_type, status)
+           VALUES ('وصف تجريبي للمنشور', 'reel', 'scheduled')"""
+    ).lastrowid
+    conn.execute(
+        """INSERT INTO publications(post_id, channel_id, scheduled_at, status)
+           VALUES (?, ?, '2026-11-18T12:00:00Z', 'scheduled')""",
+        (post, channel),
+    )
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(conn, cfg(config), client, callback(data="bs:posts"))
+    assert "وصف تجريبي للمنشور" in client.messages[0][1]
+
+
+def test_replayed_comment_toggle_update_is_idempotent(conn, config):
+    channel = conn.execute(
+        """INSERT INTO channels(platform, account_name)
+           VALUES ('instagram', 'test')"""
+    ).lastrowid
+    rule_id = conn.execute(
+        """INSERT INTO instagram_comment_rules(channel_id, media_id, enabled)
+           VALUES (?, 'media-1', 0)""",
+        (channel,),
+    ).lastrowid
+    conn.commit()
+    update = callback(update_id=77, data=f"bs:comment:{rule_id}")
+    client = FakeTelegram()
+    assert process_control_update(conn, cfg(config), client, update)
+    assert process_control_update(conn, cfg(config), client, update)
+    assert conn.execute(
+        "SELECT enabled FROM instagram_comment_rules WHERE id=?", (rule_id,)
+    ).fetchone()[0] == 1
