@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 
 from .redact import redact
 
+NOTIFICATION_RETRY_SECONDS = 60
+
 
 def _allowed(raw: str) -> list[str]:
     return list(dict.fromkeys(part.strip() for part in (raw or "").split(",") if part.strip()))[:20]
@@ -66,20 +68,43 @@ def _notify_once(conn, row, config, logger=None):
                            row["id"], redact(str(exc))[:300])
         return
     for chat_id in chats:
-        delivered = conn.execute(
-            """SELECT 1 FROM telegram_operation_notifications
+        attempt = conn.execute(
+            """SELECT last_attempt_at,notified_at FROM telegram_operation_notifications
                 WHERE operation_id=? AND chat_id=?""",
             (row["id"], chat_id),
         ).fetchone()
-        if delivered:
+        if attempt and attempt["notified_at"]:
             continue
+        if attempt and attempt["last_attempt_at"]:
+            try:
+                last_attempt = datetime.fromisoformat(
+                    str(attempt["last_attempt_at"]).replace("Z", "+00:00")
+                )
+                if last_attempt.tzinfo is None:
+                    last_attempt = last_attempt.replace(tzinfo=timezone.utc)
+                if (datetime.now(timezone.utc) - last_attempt).total_seconds() < NOTIFICATION_RETRY_SECONDS:
+                    continue
+            except (TypeError, ValueError):
+                pass
+        attempted_at = datetime.now(timezone.utc).isoformat()
+        with conn:
+            conn.execute(
+                """INSERT INTO telegram_operation_notifications
+                   (operation_id,chat_id,last_attempt_at,attempt_count,notified_at)
+                   VALUES(?,?,?,1,NULL)
+                   ON CONFLICT(operation_id,chat_id) DO UPDATE SET
+                     last_attempt_at=excluded.last_attempt_at,
+                     attempt_count=telegram_operation_notifications.attempt_count+1
+                   WHERE telegram_operation_notifications.notified_at IS NULL""",
+                (row["id"], chat_id, attempted_at),
+            )
         try:
             client.send_message(config.telegram_bot_token, chat_id, message[:3900])
             with conn:
                 conn.execute(
-                    """INSERT OR IGNORE INTO telegram_operation_notifications
-                       (operation_id,chat_id,notified_at) VALUES(?,?,?)""",
-                    (row["id"], chat_id, datetime.now(timezone.utc).isoformat()),
+                    """UPDATE telegram_operation_notifications SET notified_at=?
+                        WHERE operation_id=? AND chat_id=? AND notified_at IS NULL""",
+                    (datetime.now(timezone.utc).isoformat(), row["id"], chat_id),
                 )
         except Exception as exc:  # notification failure must never break the publishing worker
             if logger:
@@ -221,11 +246,26 @@ def retry_pending_notifications(conn, config, *, logger=None, limit: int = 20):
     """Retry durable alerts whose Telegram delivery was not confirmed previously."""
     if not config.telegram_bot_token or not _allowed(config.telegram_allowed_chat_ids):
         return 0
+    retry_before = (
+        datetime.now(timezone.utc) -
+        __import__("datetime").timedelta(seconds=NOTIFICATION_RETRY_SECONDS)
+    ).isoformat()
     rows = conn.execute(
-        """SELECT * FROM telegram_operation_log
-            WHERE notified_at IS NULL AND status IN ('success','retrying','failed')
-            ORDER BY created_at ASC,id ASC LIMIT ?""",
-        (max(1, min(int(limit), 100)),),
+        """SELECT event.* FROM telegram_operation_log event
+            WHERE event.notified_at IS NULL AND event.status IN ('success','retrying','failed')
+              AND (
+                NOT EXISTS (
+                    SELECT 1 FROM telegram_operation_notifications n
+                     WHERE n.operation_id=event.id
+                )
+                OR EXISTS (
+                    SELECT 1 FROM telegram_operation_notifications n
+                     WHERE n.operation_id=event.id AND n.notified_at IS NULL
+                       AND (n.last_attempt_at IS NULL OR n.last_attempt_at<=?)
+                )
+              )
+            ORDER BY event.created_at ASC,event.id ASC LIMIT ?""",
+        (retry_before, max(1, min(int(limit), 100))),
     ).fetchall()
     for row in rows:
         _notify_once(conn, row, config, logger=logger)
