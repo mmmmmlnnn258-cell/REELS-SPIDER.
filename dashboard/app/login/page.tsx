@@ -1,7 +1,7 @@
 import { dashboardAuthConfigured } from "@/lib/dashboard-auth";
 
 type LoginPageProps = {
-  searchParams: Promise<{ next?: string; error?: string }>;
+  searchParams: Promise<{ next?: string; error?: string; locked?: string }>;
 };
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
