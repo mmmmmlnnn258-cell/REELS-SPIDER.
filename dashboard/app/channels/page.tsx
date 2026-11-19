@@ -57,6 +57,12 @@ export default async function ChannelsPage({
   // connection looks identical to a successful one that simply has not appeared yet.
   const params = await searchParams;
   const channels = getChannels();
+  // Never serialize credentials into the React Server Component payload.
+  const displayChannels = channels.map(({ access_token, refresh_token, ...channel }) => ({
+    ...channel,
+    has_access_token: Boolean(access_token),
+    has_refresh_token: Boolean(refresh_token),
+  }));
   // One clock reading for every card's token countdown.
   const nowMs = Date.parse(nowIso());
   const groups = listChannelGroups().map((g) => {
@@ -137,7 +143,7 @@ export default async function ChannelsPage({
           nextChannelId={channels.reduce((max, c) => Math.max(max, c.id), 0) + 1}
         />
 
-        {channels.length === 0 ? (
+        {displayChannels.length === 0 ? (
           <EmptyState title="No channels configured">
             Add your first account above — Instagram, Facebook, Threads, Discord,
             Telegram, or TikTok. Most need an account id and a long-lived access token;
@@ -151,7 +157,7 @@ export default async function ChannelsPage({
             bandTimes={config.bandTimes}
           />
           <div className="grid gap-4 md:grid-cols-2">
-            {channels.map((c) => (
+            {displayChannels.map((c) => (
               <div
                 key={c.id}
                 className={`rounded-card border bg-surface p-5 ${
@@ -205,7 +211,7 @@ export default async function ChannelsPage({
                     <TokenStatus channel={c} nowMs={nowMs} />
                   </Row>
                 </dl>
-                {c.access_token && c.token_error && TOKEN_UPKEEP.has(c.platform) ? (
+                {c.has_access_token && c.token_error && TOKEN_UPKEEP.has(c.platform) ? (
                   <p className="mt-2 rounded-md bg-status-failed/10 px-2.5 py-1.5 text-[11px] text-status-failed">
                     {c.token_error}
                   </p>
