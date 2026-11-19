@@ -5,10 +5,8 @@ export const DASHBOARD_SESSION_TTL_SECONDS = 12 * 60 * 60;
 export const DASHBOARD_LOGIN_MAX_FAILURES = 5;
 export const DASHBOARD_LOGIN_WINDOW_MS = 15 * 60 * 1000;
 
-// Process-local limiter keyed by normalized username. It deliberately avoids trusting
-// client-supplied forwarding headers for identity. Expired entries are pruned and the
-// map is bounded so arbitrary usernames cannot grow memory without limit.
-const loginFailures = new Map<string, { count: number; blockedUntil: number }>();
+type LoginFailure = { count: number; windowStartedAt: number; blockedUntil: number };
+const loginFailures = new Map<string, LoginFailure>();
 
 function loginKey(username: string): string {
   return username.trim().toLowerCase().slice(0, 256);
@@ -16,7 +14,7 @@ function loginKey(username: string): string {
 
 function pruneLoginFailures(now: number): void {
   for (const [key, entry] of loginFailures) {
-    if (entry.blockedUntil <= now) loginFailures.delete(key);
+    if (entry.windowStartedAt + DASHBOARD_LOGIN_WINDOW_MS <= now) loginFailures.delete(key);
   }
   while (loginFailures.size > 10_000) {
     const oldest = loginFailures.keys().next().value;
@@ -28,7 +26,7 @@ function pruneLoginFailures(now: number): void {
 export function dashboardLoginRetryAfter(username: string, now = Date.now()): number {
   pruneLoginFailures(now);
   const entry = loginFailures.get(loginKey(username));
-  return entry && entry.blockedUntil > now
+  return entry && entry.count >= DASHBOARD_LOGIN_MAX_FAILURES && entry.blockedUntil > now
     ? Math.ceil((entry.blockedUntil - now) / 1000)
     : 0;
 }
@@ -38,17 +36,17 @@ export function recordDashboardLoginFailure(username: string, now = Date.now()):
   const key = loginKey(username);
   if (!key) return 0;
   const existing = loginFailures.get(key);
-  if (existing && existing.blockedUntil > now) {
+  if (existing && existing.count >= DASHBOARD_LOGIN_MAX_FAILURES && existing.blockedUntil > now) {
     return Math.ceil((existing.blockedUntil - now) / 1000);
   }
-  const count = (existing?.count ?? 0) + 1;
-  const blockedUntil = count >= DASHBOARD_LOGIN_MAX_FAILURES
-    ? now + DASHBOARD_LOGIN_WINDOW_MS
-    : now + DASHBOARD_LOGIN_WINDOW_MS;
+  const inWindow = existing && now - existing.windowStartedAt < DASHBOARD_LOGIN_WINDOW_MS;
+  const windowStartedAt = inWindow ? existing.windowStartedAt : now;
+  const count = inWindow ? existing.count + 1 : 1;
+  const blockedUntil = windowStartedAt + DASHBOARD_LOGIN_WINDOW_MS;
   loginFailures.delete(key);
-  loginFailures.set(key, { count, blockedUntil });
+  loginFailures.set(key, { count, windowStartedAt, blockedUntil });
   return count >= DASHBOARD_LOGIN_MAX_FAILURES
-    ? Math.ceil(DASHBOARD_LOGIN_WINDOW_MS / 1000)
+    ? Math.max(1, Math.ceil((blockedUntil - now) / 1000))
     : 0;
 }
 
@@ -56,7 +54,6 @@ export function resetDashboardLoginFailures(username: string): void {
   loginFailures.delete(loginKey(username));
 }
 
-// Test-only reset keeps rate-limit tests isolated without exposing state to callers.
 export function resetDashboardLoginLimiterForTests(): void {
   loginFailures.clear();
 }
@@ -106,7 +103,7 @@ export function createDashboardSession(now = Date.now()): {
 export function verifyDashboardSession(token: string | undefined, now = Date.now()): boolean {
   const key = secret();
   if (!key || !token) return false;
-  const match = /^(\d{10})\.([a-f0-9]{64})\.([A-Za-z0-9_-]{43})$/.exec(token);
+  const match = /^(\\d{10})\\.([a-f0-9]{64})\\.([A-Za-z0-9_-]{43})$/.exec(token);
   if (!match) return false;
   const expiresAt = Number(match[1]);
   if (!Number.isSafeInteger(expiresAt) || expiresAt <= Math.floor(now / 1000)) {
