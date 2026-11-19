@@ -4,6 +4,9 @@ import {
   DASHBOARD_SESSION_COOKIE,
   DASHBOARD_SESSION_TTL_SECONDS,
   dashboardAuthConfigured,
+  dashboardLoginRetryAfter,
+  recordDashboardLoginFailure,
+  resetDashboardLoginFailures,
   verifyDashboardCredentials,
 } from "@/lib/dashboard-auth";
 
@@ -46,16 +49,31 @@ export async function POST(request: NextRequest) {
 
   const username = form.get("username");
   const password = form.get("password");
-  if (
-    typeof username !== "string" ||
-    typeof password !== "string" ||
-    !verifyDashboardCredentials(username, password)
-  ) {
-    const url = new URL("/login", request.url);
-    url.searchParams.set("error", "1");
-    return NextResponse.redirect(url, 303);
+  if (typeof username !== "string" || typeof password !== "string") {
+    return NextResponse.json({ error: "Invalid login form." }, { status: 400 });
   }
 
+  const retryAfter = dashboardLoginRetryAfter(username);
+  if (retryAfter > 0) {
+    const url = new URL("/login", request.url);
+    url.searchParams.set("locked", "1");
+    const response = NextResponse.redirect(url, 303);
+    response.headers.set("Retry-After", String(retryAfter));
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  }
+
+  if (!verifyDashboardCredentials(username, password)) {
+    const blockedFor = recordDashboardLoginFailure(username);
+    const url = new URL("/login", request.url);
+    url.searchParams.set(blockedFor > 0 ? "locked" : "error", "1");
+    const response = NextResponse.redirect(url, 303);
+    response.headers.set("Cache-Control", "no-store");
+    if (blockedFor > 0) response.headers.set("Retry-After", String(blockedFor));
+    return response;
+  }
+
+  resetDashboardLoginFailures(username);
   const session = createDashboardSession();
   if (!session) {
     return NextResponse.json({ error: "Dashboard session signing is unavailable." }, { status: 503 });
