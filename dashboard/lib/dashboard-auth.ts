@@ -103,7 +103,7 @@ export function createDashboardSession(now = Date.now()): {
 export function verifyDashboardSession(token: string | undefined, now = Date.now()): boolean {
   const key = secret();
   if (!key || !token) return false;
-  const match = /^(\\d{10})\\.([a-f0-9]{64})\\.([A-Za-z0-9_-]{43})$/.exec(token);
+  const match = /^(\d{10})\.([a-f0-9]{64})\.([A-Za-z0-9_-]{43})$/.exec(token);
   if (!match) return false;
   const expiresAt = Number(match[1]);
   if (!Number.isSafeInteger(expiresAt) || expiresAt <= Math.floor(now / 1000)) {
