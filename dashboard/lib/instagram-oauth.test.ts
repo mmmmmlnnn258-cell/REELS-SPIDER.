@@ -6,7 +6,7 @@ import {
   instagramAuthorizeUrl,
   instagramCallbackUri,
 } from "./instagram-oauth";
-import { instagramRedirectUri } from "./config";
+import { instagramCredentials, instagramRedirectUri } from "./config";
 
 test("Instagram OAuth state is cryptographically random and unique", () => {
   const first = createInstagramOAuthState();
