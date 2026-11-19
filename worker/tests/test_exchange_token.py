@@ -173,3 +173,29 @@ def test_arg_value_reads_both_spellings(monkeypatch):
     assert ex._arg_value("--token-file") == "a.txt"
     assert ex._arg_value("--platform") == "facebook"
     assert ex._arg_value("--absent") is None
+
+
+def test_instagram_exchange_requires_its_own_secret(config, monkeypatch):
+    config.instagram_app_secret = ""
+    config.meta_app_secret = "facebook-secret"
+    called = []
+    monkeypatch.setattr(ex, "_get", lambda *a, **k: called.append((a, k)) or {})
+    with pytest.raises(ex.ExchangeError, match="INSTAGRAM_APP_SECRET"):
+        ex.exchange_instagram_token(config, "short-token")
+    assert called == []
+
+
+def test_instagram_exchange_never_uses_the_facebook_secret(config, monkeypatch):
+    config.instagram_app_secret = "instagram-secret"
+    config.meta_app_secret = "facebook-secret"
+    captured = {}
+
+    def fake_get(url, params):
+        captured.update(url=url, params=params)
+        return {"access_token": "long-token", "expires_in": 5184000}
+
+    monkeypatch.setattr(ex, "_get", fake_get)
+    token, expires = ex.exchange_instagram_token(config, "short-token")
+    assert token == "long-token"
+    assert expires == 5184000
+    assert captured["params"]["client_secret"] == "instagram-secret"
