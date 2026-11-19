@@ -6,6 +6,7 @@ let limiterPromise: Promise<typeof import("../lib/dashboard-login-limiter.ts")> 
 
 async function limiter() {
   if (!limiterPromise) {
+    process.env.DASHBOARD_SESSION_SECRET = "test-login-limiter-secret-with-at-least-32-characters";
     makeTestDb();
     limiterPromise = import("../lib/dashboard-login-limiter.ts");
   }
