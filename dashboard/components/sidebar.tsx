@@ -77,6 +77,11 @@ export function Sidebar() {
 
       <div className="p-3 border-t border-border space-y-3">
         <UpdateBanner />
+        <form action="/api/auth/logout" method="post" className="px-3">
+          <button type="submit" className="text-xs font-medium text-muted hover:text-ink">
+            Sign out
+          </button>
+        </form>
         <ThemeControls />
         <p className="px-3 text-[11px] leading-relaxed text-faint">
           Worker runs separately.
