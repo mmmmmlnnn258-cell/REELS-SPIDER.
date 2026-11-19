@@ -11,7 +11,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-surface px-5 py-10">
-      <section className="w-full max-w-md rounded-2xl border border-border bg-card p-8 shadow-sm">
+      <section className="w-full max-w-md rounded-2xl border border-border bg-surface p-8 shadow-sm">
         <div className="mb-7">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand">BLACK SPIDER</p>
           <h1 className="mt-2 text-2xl font-semibold text-ink">Sign in to SocialScheduler</h1>
