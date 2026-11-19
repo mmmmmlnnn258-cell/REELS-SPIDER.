@@ -50,7 +50,7 @@ export function GET(req: NextRequest) {
   if (!clientId || !clientSecret) {
     return channelPage(
       redirectUri,
-      "Meta Instagram Login credentials are missing. Configure META_APP_ID and INSTAGRAM_APP_SECRET on the server first.",
+      "Meta Instagram Login credentials are missing. Configure INSTAGRAM_APP_ID and INSTAGRAM_APP_SECRET on the server first.",
     );
   }
 
