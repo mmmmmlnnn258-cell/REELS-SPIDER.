@@ -28,13 +28,21 @@ type MetaPayload = {
   error?: unknown;
 };
 
-function back(redirectUri: string, params: Record<string, string>) {
+function back(
+  redirectUri: string,
+  params: Record<string, string>,
+  clearOAuthCookies = true,
+) {
   const url = new URL("/channels", new URL(redirectUri).origin);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   const response = NextResponse.redirect(url);
   response.headers.set("Cache-Control", "no-store");
-  response.cookies.delete(STATE_COOKIE);
-  response.cookies.delete(CHANNEL_COOKIE);
+  // Never let an unsolicited/mismatched callback erase a legitimate in-progress
+  // OAuth transaction in this browser.
+  if (clearOAuthCookies) {
+    response.cookies.delete(STATE_COOKIE);
+    response.cookies.delete(CHANNEL_COOKIE);
+  }
   return response;
 }
 
@@ -71,20 +79,25 @@ export async function GET(req: NextRequest) {
   const expectedState = req.cookies.get(STATE_COOKIE)?.value;
   const targetId = Number(req.cookies.get(CHANNEL_COOKIE)?.value);
 
+  // Validate the browser-bound state before handling either success or denial.
+  // A forged error callback must not clear cookies belonging to a real OAuth attempt.
+  if (!state || !expectedState || state !== expectedState) {
+    return back(
+      redirectUri,
+      {
+        instagram_error: "The Instagram sign-in session expired or did not match this browser. Try again.",
+      },
+      false,
+    );
+  }
+
   if (denied) {
     return back(redirectUri, {
       instagram_error: "Instagram authorization was declined or canceled. No channel credentials were changed.",
     });
   }
 
-  if (
-    !code ||
-    !state ||
-    !expectedState ||
-    state !== expectedState ||
-    !Number.isSafeInteger(targetId) ||
-    targetId <= 0
-  ) {
+  if (!code || !Number.isSafeInteger(targetId) || targetId <= 0) {
     return back(redirectUri, {
       instagram_error: "The Instagram sign-in session expired or did not match this browser. Try again.",
     });
