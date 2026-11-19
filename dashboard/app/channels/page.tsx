@@ -369,7 +369,12 @@ const WARN_WITHIN_DAYS = 14;
  * One line that answers "will this channel still post next month?". Rendered on the
  * server (the page is force-dynamic), so its clock cannot disagree with the client's.
  */
-function TokenStatus({ channel: c, nowMs }: { channel: Channel; nowMs: number }) {
+type ChannelDisplay = Omit<Channel, "access_token" | "refresh_token"> & {
+  has_access_token: boolean;
+  has_refresh_token: boolean;
+};
+
+function TokenStatus({ channel: c, nowMs }: { channel: ChannelDisplay; nowMs: number }) {
   if (!c.access_token) return <span className="text-status-failed">missing</span>;
   if (!TOKEN_UPKEEP.has(c.platform)) {
     return <span className="text-status-posted">configured</span>;
