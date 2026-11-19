@@ -271,7 +271,7 @@ export default async function ChannelsPage({
                       <div className="min-w-0">
                         <p className="text-xs font-medium text-ink-soft">Instagram connection</p>
                         <p className="mt-0.5 text-[11px] text-muted">
-                          {c.access_token && c.remote_account_id
+                          {c.has_access_token && c.remote_account_id
                             ? "This channel is linked. Reconnect only if its access needs refreshing."
                             : "Connect this existing channel securely with Instagram. Its name, timezone, queue and history will be kept."}
                         </p>
@@ -285,7 +285,7 @@ export default async function ChannelsPage({
                         href={`/api/channels/instagram/authorize?channel_id=${c.id}`}
                         className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink hover:bg-surface"
                       >
-                        {c.access_token && c.remote_account_id ? "Reconnect Instagram" : "ربط Instagram"}
+                        {c.has_access_token && c.remote_account_id ? "Reconnect Instagram" : "ربط Instagram"}
                       </a>
                     </div>
                   </div>
@@ -375,7 +375,7 @@ type ChannelDisplay = Omit<Channel, "access_token" | "refresh_token"> & {
 };
 
 function TokenStatus({ channel: c, nowMs }: { channel: ChannelDisplay; nowMs: number }) {
-  if (!c.access_token) return <span className="text-status-failed">missing</span>;
+  if (!c.has_access_token) return <span className="text-status-failed">missing</span>;
   if (!TOKEN_UPKEEP.has(c.platform)) {
     return <span className="text-status-posted">configured</span>;
   }
