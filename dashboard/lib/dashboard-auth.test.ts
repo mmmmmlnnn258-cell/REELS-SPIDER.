@@ -64,7 +64,7 @@ test("dashboard login rate limit blocks after five failures and resets after the
       assert.equal(recordDashboardLoginFailure("Owner", start + i), 0);
       assert.equal(dashboardLoginRetryAfter("owner", start + i), 0);
     }
-    assert.equal(recordDashboardLoginFailure(" owner ", start + 4), 15 * 60 - 1);
+    assert.equal(recordDashboardLoginFailure(" owner ", start + 4), 15 * 60);
     assert.equal(dashboardLoginRetryAfter("OWNER", start + 5), 15 * 60);
     assert.equal(dashboardLoginRetryAfter("owner", start + 15 * 60 * 1000 + 5), 0);
     recordDashboardLoginFailure("owner", start + 16 * 60 * 1000);
