@@ -32,7 +32,6 @@ test("authorize URL uses Instagram Business Login and current permission names",
     "instagram_business_basic",
     "instagram_business_content_publish",
     "instagram_business_manage_comments",
-    "instagram_business_manage_insights",
     "instagram_business_manage_messages",
   ]);
   assert.equal(url.searchParams.get("scope"), INSTAGRAM_SCOPES.join(","));
@@ -40,6 +39,7 @@ test("authorize URL uses Instagram Business Login and current permission names",
   assert.ok(INSTAGRAM_SCOPES.includes("instagram_business_content_publish"));
   assert.ok(INSTAGRAM_SCOPES.includes("instagram_business_manage_comments"));
   assert.ok(INSTAGRAM_SCOPES.includes("instagram_business_manage_messages"));
+  assert.equal(INSTAGRAM_SCOPES.length, 4);
 });
 
 test("callback URI is built on the application origin", () => {
@@ -72,4 +72,19 @@ test("configured Instagram redirect URI is HTTPS and pinned to the exact callbac
   process.env.INSTAGRAM_REDIRECT_URI =
     "https://scheduler.example.test/untrusted/path";
   assert.equal(instagramRedirectUri(), "");
+});
+
+
+test("Instagram OAuth uses its own app id and secret, never Meta app credentials", () => {
+  process.env.META_APP_ID = "meta-app-id";
+  process.env.META_APP_SECRET = "meta-app-secret";
+  process.env.INSTAGRAM_APP_ID = "instagram-app-id";
+  process.env.INSTAGRAM_APP_SECRET = "instagram-app-secret";
+  assert.deepEqual(instagramCredentials(), {
+    clientId: "instagram-app-id",
+    clientSecret: "instagram-app-secret",
+  });
+  delete process.env.INSTAGRAM_APP_ID;
+  delete process.env.INSTAGRAM_APP_SECRET;
+  assert.deepEqual(instagramCredentials(), { clientId: "", clientSecret: "" });
 });
