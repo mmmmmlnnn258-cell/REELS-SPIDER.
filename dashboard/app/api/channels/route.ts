@@ -6,7 +6,12 @@ import { isValidTimezone } from "@/lib/timezones";
 export const runtime = "nodejs";
 
 export function GET() {
-  return NextResponse.json({ channels: getChannels() });
+  const channels = getChannels().map(({ access_token, refresh_token, ...channel }) => ({
+    ...channel,
+    has_access_token: Boolean(access_token),
+    has_refresh_token: Boolean(refresh_token),
+  }));
+  return NextResponse.json({ channels });
 }
 
 export async function POST(req: NextRequest) {
