@@ -2,6 +2,64 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 
 export const DASHBOARD_SESSION_COOKIE = "ss_dashboard_session";
 export const DASHBOARD_SESSION_TTL_SECONDS = 12 * 60 * 60;
+export const DASHBOARD_LOGIN_MAX_FAILURES = 5;
+export const DASHBOARD_LOGIN_WINDOW_MS = 15 * 60 * 1000;
+
+// Process-local limiter keyed by normalized username. It deliberately avoids trusting
+// client-supplied forwarding headers for identity. Expired entries are pruned and the
+// map is bounded so arbitrary usernames cannot grow memory without limit.
+const loginFailures = new Map<string, { count: number; blockedUntil: number }>();
+
+function loginKey(username: string): string {
+  return username.trim().toLowerCase().slice(0, 256);
+}
+
+function pruneLoginFailures(now: number): void {
+  for (const [key, entry] of loginFailures) {
+    if (entry.blockedUntil <= now) loginFailures.delete(key);
+  }
+  while (loginFailures.size > 10_000) {
+    const oldest = loginFailures.keys().next().value;
+    if (oldest === undefined) break;
+    loginFailures.delete(oldest);
+  }
+}
+
+export function dashboardLoginRetryAfter(username: string, now = Date.now()): number {
+  pruneLoginFailures(now);
+  const entry = loginFailures.get(loginKey(username));
+  return entry && entry.blockedUntil > now
+    ? Math.ceil((entry.blockedUntil - now) / 1000)
+    : 0;
+}
+
+export function recordDashboardLoginFailure(username: string, now = Date.now()): number {
+  pruneLoginFailures(now);
+  const key = loginKey(username);
+  if (!key) return 0;
+  const existing = loginFailures.get(key);
+  if (existing && existing.blockedUntil > now) {
+    return Math.ceil((existing.blockedUntil - now) / 1000);
+  }
+  const count = (existing?.count ?? 0) + 1;
+  const blockedUntil = count >= DASHBOARD_LOGIN_MAX_FAILURES
+    ? now + DASHBOARD_LOGIN_WINDOW_MS
+    : now + DASHBOARD_LOGIN_WINDOW_MS;
+  loginFailures.delete(key);
+  loginFailures.set(key, { count, blockedUntil });
+  return count >= DASHBOARD_LOGIN_MAX_FAILURES
+    ? Math.ceil(DASHBOARD_LOGIN_WINDOW_MS / 1000)
+    : 0;
+}
+
+export function resetDashboardLoginFailures(username: string): void {
+  loginFailures.delete(loginKey(username));
+}
+
+// Test-only reset keeps rate-limit tests isolated without exposing state to callers.
+export function resetDashboardLoginLimiterForTests(): void {
+  loginFailures.clear();
+}
 
 function secret(): string {
   const value = process.env.DASHBOARD_SESSION_SECRET ?? "";
