@@ -2,62 +2,6 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 
 export const DASHBOARD_SESSION_COOKIE = "ss_dashboard_session";
 export const DASHBOARD_SESSION_TTL_SECONDS = 12 * 60 * 60;
-export const DASHBOARD_LOGIN_MAX_FAILURES = 5;
-export const DASHBOARD_LOGIN_WINDOW_MS = 15 * 60 * 1000;
-
-type LoginFailure = { count: number; windowStartedAt: number; blockedUntil: number };
-const loginFailures = new Map<string, LoginFailure>();
-
-function loginKey(username: string): string {
-  return username.trim().toLowerCase().slice(0, 256);
-}
-
-function pruneLoginFailures(now: number): void {
-  for (const [key, entry] of loginFailures) {
-    if (entry.windowStartedAt + DASHBOARD_LOGIN_WINDOW_MS <= now) loginFailures.delete(key);
-  }
-  while (loginFailures.size > 10_000) {
-    const oldest = loginFailures.keys().next().value;
-    if (oldest === undefined) break;
-    loginFailures.delete(oldest);
-  }
-}
-
-export function dashboardLoginRetryAfter(username: string, now = Date.now()): number {
-  pruneLoginFailures(now);
-  const entry = loginFailures.get(loginKey(username));
-  return entry && entry.count >= DASHBOARD_LOGIN_MAX_FAILURES && entry.blockedUntil > now
-    ? Math.ceil((entry.blockedUntil - now) / 1000)
-    : 0;
-}
-
-export function recordDashboardLoginFailure(username: string, now = Date.now()): number {
-  pruneLoginFailures(now);
-  const key = loginKey(username);
-  if (!key) return 0;
-  const existing = loginFailures.get(key);
-  if (existing && existing.count >= DASHBOARD_LOGIN_MAX_FAILURES && existing.blockedUntil > now) {
-    return Math.ceil((existing.blockedUntil - now) / 1000);
-  }
-  const inWindow = existing && now - existing.windowStartedAt < DASHBOARD_LOGIN_WINDOW_MS;
-  const windowStartedAt = inWindow ? existing.windowStartedAt : now;
-  const count = inWindow ? existing.count + 1 : 1;
-  const blockedUntil = windowStartedAt + DASHBOARD_LOGIN_WINDOW_MS;
-  loginFailures.delete(key);
-  loginFailures.set(key, { count, windowStartedAt, blockedUntil });
-  return count >= DASHBOARD_LOGIN_MAX_FAILURES
-    ? Math.max(1, Math.ceil((blockedUntil - now) / 1000))
-    : 0;
-}
-
-export function resetDashboardLoginFailures(username: string): void {
-  loginFailures.delete(loginKey(username));
-}
-
-export function resetDashboardLoginLimiterForTests(): void {
-  loginFailures.clear();
-}
-
 function secret(): string {
   const value = process.env.DASHBOARD_SESSION_SECRET ?? "";
   return value.length >= 32 ? value : "";
