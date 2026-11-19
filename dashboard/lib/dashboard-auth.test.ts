@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import {
   createDashboardSession,
   dashboardAuthConfigured,
-  verifyDashboardCredentials,\n  dashboardLoginRetryAfter,\n  recordDashboardLoginFailure,\n  resetDashboardLoginFailures,\n  resetDashboardLoginLimiterForTests,
+  dashboardLoginRetryAfter,
+  recordDashboardLoginFailure,
+  resetDashboardLoginFailures,
+  resetDashboardLoginLimiterForTests,
+  verifyDashboardCredentials,
   verifyDashboardSession,
 } from "./dashboard-auth";
 
@@ -52,7 +56,7 @@ test("dashboard credentials are checked and signed sessions expire", () => {
   }
 });
 
-test("dashboard login rate limit blocks after five failures and resets on success", () => {
+test("dashboard login rate limit blocks after five failures and resets after the window or a successful login", () => {
   resetDashboardLoginLimiterForTests();
   const start = 1_800_000_000_000;
   try {
@@ -60,8 +64,8 @@ test("dashboard login rate limit blocks after five failures and resets on succes
       assert.equal(recordDashboardLoginFailure("Owner", start + i), 0);
       assert.equal(dashboardLoginRetryAfter("owner", start + i), 0);
     }
-    assert.equal(recordDashboardLoginFailure(" owner ", start + 4), 15 * 60);
-    assert.equal(dashboardLoginRetryAfter("OWNER", start + 5), 15 * 60);
+    assert.equal(recordDashboardLoginFailure(" owner ", start + 4), 15 * 60 - 1);
+    assert.equal(dashboardLoginRetryAfter("OWNER", start + 5), 15 * 60 - 1);
     assert.equal(dashboardLoginRetryAfter("owner", start + 15 * 60 * 1000 + 5), 0);
     recordDashboardLoginFailure("owner", start + 16 * 60 * 1000);
     resetDashboardLoginFailures("OWNER");
