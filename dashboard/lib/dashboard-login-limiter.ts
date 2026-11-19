@@ -1,13 +1,18 @@
 import "server-only";
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { getDb } from "./db";
 
 export const DASHBOARD_LOGIN_MAX_FAILURES = 5;
 export const DASHBOARD_LOGIN_WINDOW_MS = 15 * 60 * 1000;
 
 function clientKey(clientIp: string): string {
-  // Store only a one-way digest, never a raw client IP address.
-  return createHash("sha256").update(clientIp || "unknown", "utf8").digest("hex");
+  // A keyed digest prevents offline enumeration of the small IP-address space.
+  const secret = process.env.DASHBOARD_SESSION_SECRET ?? "";
+  if (secret.length < 32) throw new Error("Dashboard session secret is required for login rate limiting.");
+  return createHmac("sha256", secret)
+    .update("dashboard-login-rate-limit\\0", "utf8")
+    .update(clientIp || "unknown", "utf8")
+    .digest("hex");
 }
 
 function ensureTable(): void {
