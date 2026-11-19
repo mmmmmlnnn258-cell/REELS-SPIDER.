@@ -187,13 +187,24 @@ def process_update(conn, config, client: TelegramClient, update: dict[str, Any],
     ).fetchone():
         return "ignored"
 
-    message = update.get("message") or update.get("channel_post")
+    # Video ingestion is private-chat-only. Never accept channel_post or group/supergroup
+    # messages, even if their chat ID was accidentally added to the allow-list.
+    message = update.get("message")
     if not isinstance(message, dict):
         _record_update(conn, update_id, None, "ignored")
         return "ignored"
 
     chat = message.get("chat") or {}
     chat_id = str(chat.get("id", ""))
+    sender = message.get("from") or {}
+    sender_id = str(sender.get("id", ""))
+    if (not chat_id or chat.get("type") != "private"
+            or not sender_id or sender_id != chat_id):
+        _record_update(conn, update_id, chat_id or None, "ignored")
+        if logger and chat_id:
+            logger.info("Ignored non-private or sender-mismatched Telegram update chat_id=%s", chat_id)
+        return "ignored"
+
     allowed = _allowed_chat_ids(config.telegram_allowed_chat_ids)
     if not allowed and str(message.get("text") or "").strip().startswith("/start"):
         _record_update(conn, update_id, chat_id or None, "ignored")
