@@ -10,7 +10,7 @@ function clientKey(clientIp: string): string {
   const secret = process.env.DASHBOARD_SESSION_SECRET ?? "";
   if (secret.length < 32) throw new Error("Dashboard session secret is required for login rate limiting.");
   return createHmac("sha256", secret)
-    .update("dashboard-login-rate-limit\\0", "utf8")
+    .update("dashboard-login-rate-limit:", "utf8")
     .update(clientIp || "unknown", "utf8")
     .digest("hex");
 }
