@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectInstagramChannel, getChannel } from "@/lib/queries";
 import { config, instagramCredentials, instagramRedirectUri } from "@/lib/config";
-import { INSTAGRAM_GRAPH_BASE } from "@/lib/instagram-oauth";
+import { INSTAGRAM_GRAPH_BASE, INSTAGRAM_SCOPES } from "@/lib/instagram-oauth";
 
 export const runtime = "nodejs";
 
@@ -17,7 +17,7 @@ type MetaIdentity = {
 type MetaShortToken = {
   access_token?: string;
   user_id?: number | string;
-  permissions?: string;
+  permissions?: string | string[];
 };
 
 type MetaPayload = {
@@ -36,6 +36,11 @@ function back(redirectUri: string, params: Record<string, string>) {
   response.cookies.delete(STATE_COOKIE);
   response.cookies.delete(CHANNEL_COOKIE);
   return response;
+}
+
+function grantedPermissions(value: string | string[] | undefined): Set<string> {
+  const entries = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+  return new Set(entries.map((permission) => permission.trim()).filter(Boolean));
 }
 
 async function readJson(response: Response): Promise<MetaPayload | null> {
@@ -126,6 +131,14 @@ export async function GET(req: NextRequest) {
     if (!shortResponse.ok || !shortToken?.access_token) {
       return back(redirectUri, {
         instagram_error: "Meta could not exchange the Instagram authorization code. Check the registered callback URL and app settings, then try again.",
+      });
+    }
+
+    const granted = grantedPermissions(shortToken.permissions);
+    const missingPermissions = INSTAGRAM_SCOPES.filter((permission) => !granted.has(permission));
+    if (missingPermissions.length > 0) {
+      return back(redirectUri, {
+        instagram_error: "Instagram did not grant all required permissions. Missing: " + missingPermissions.join(", ") + ". Review the requested permissions in Meta and reconnect. No channel credentials were changed.",
       });
     }
 
