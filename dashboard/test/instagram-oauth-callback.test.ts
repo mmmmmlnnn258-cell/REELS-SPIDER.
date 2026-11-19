@@ -190,7 +190,9 @@ test("callback refuses an ambiguous Meta identity response without storing crede
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.startsWith("https://api.instagram.com/oauth/access_token")) {
-      return jsonResponse({ access_token: "short-lived-secret", expires_in: 3600 });
+      return jsonResponse({
+        data: [{ access_token: "short-lived-secret", user_id: "app-scoped-id", permissions: "instagram_business_basic" }],
+      });
     }
     if (url.startsWith("https://graph.instagram.com/access_token?")) {
       return jsonResponse({ access_token: "new-long-lived-secret", expires_in: 5184000 });
