@@ -61,7 +61,7 @@ test("callback exchanges tokens server-side and stores Instagram Login on the se
     const url = String(input);
     requested.push(url);
     if (url.startsWith("https://api.instagram.com/oauth/access_token")) {
-      return jsonResponse({ data: [{ access_token: "short-lived-secret", user_id: "app-scoped-id", permissions: "instagram_business_basic" }] });
+      return jsonResponse({ data: [{ access_token: "short-lived-secret", user_id: "app-scoped-id", permissions: "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages" }] });
     }
     if (url.startsWith("https://graph.instagram.com/access_token?")) {
       assert.match(url, /grant_type=ig_exchange_token/);
@@ -177,6 +177,47 @@ test("declined Instagram authorization leaves channel credentials untouched", as
 });
 
 
+test("callback refuses to connect when Meta did not grant every required permission", async () => {
+  const { q, GET, suffix } = await setup();
+  const channelId = q.createChannel({
+    platform: "instagram",
+    account_name: `Missing permissions ${suffix}`,
+    timezone: "UTC",
+  });
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    calls += 1;
+    const url = String(input);
+    if (url.startsWith("https://api.instagram.com/oauth/access_token")) {
+      return jsonResponse({
+        data: [{
+          access_token: "short-lived-secret",
+          user_id: "app-scoped-id",
+          permissions: "instagram_business_basic,instagram_business_content_publish",
+        }],
+      });
+    }
+    throw new Error("Long-lived token exchange must not run with incomplete permissions");
+  }) as typeof fetch;
+
+  try {
+    const response = await GET(callbackRequest(channelId));
+    const channel = q.getChannel(channelId)!;
+    const location = response.headers.get("location") ?? "";
+
+    assert.equal(calls, 1);
+    assert.match(location, /instagram_error=/);
+    assert.match(decodeURIComponent(location), /instagram_business_manage_comments/);
+    assert.match(decodeURIComponent(location), /instagram_business_manage_messages/);
+    assert.equal(channel.remote_account_id, null);
+    assert.equal(channel.access_token, null);
+    assert.equal(channel.instagram_auth_method, "legacy");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("callback refuses an ambiguous Meta identity response without storing credentials", async () => {
   const { q, GET, suffix } = await setup();
   const channelId = q.createChannel({
@@ -191,7 +232,7 @@ test("callback refuses an ambiguous Meta identity response without storing crede
     const url = String(input);
     if (url.startsWith("https://api.instagram.com/oauth/access_token")) {
       return jsonResponse({
-        data: [{ access_token: "short-lived-secret", user_id: "app-scoped-id", permissions: "instagram_business_basic" }],
+        data: [{ access_token: "short-lived-secret", user_id: "app-scoped-id", permissions: "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages" }],
       });
     }
     if (url.startsWith("https://graph.instagram.com/access_token?")) {
