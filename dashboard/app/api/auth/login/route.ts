@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isIP } from "node:net";
 import {
   createDashboardSession,
   DASHBOARD_SESSION_COOKIE,
   DASHBOARD_SESSION_TTL_SECONDS,
   dashboardAuthConfigured,
+} from "@/lib/dashboard-auth";
+import {
   dashboardLoginRetryAfter,
   recordDashboardLoginFailure,
   resetDashboardLoginFailures,
-  verifyDashboardCredentials,
-} from "@/lib/dashboard-auth";
+} from "@/lib/dashboard-login-limiter";
 
 export const runtime = "nodejs";
 
@@ -22,6 +24,20 @@ function safeNextPath(value: FormDataEntryValue | null): string {
   } catch {
     return "/";
   }
+}
+
+/**
+ * Railway's trusted reverse proxy appends the connecting client address to X-Forwarded-For.
+ * Use the right-most valid address; never trust the left-most client-supplied value.
+ */
+function clientIp(request: NextRequest): string {
+  const forwarded = request.headers.get("x-forwarded-for") ?? "";
+  const candidates = forwarded.split(",").map((value) => value.trim()).reverse();
+  const forwardedIp = candidates.find((value) => isIP(value));
+  if (forwardedIp) return forwardedIp;
+
+  const realIp = request.headers.get("x-real-ip")?.trim() ?? "";
+  return isIP(realIp) ? realIp : "unknown";
 }
 
 export async function POST(request: NextRequest) {
@@ -53,7 +69,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid login form." }, { status: 400 });
   }
 
-  const retryAfter = dashboardLoginRetryAfter(username);
+  const address = clientIp(request);
+  const retryAfter = dashboardLoginRetryAfter(address);
   if (retryAfter > 0) {
     const url = new URL("/login", request.url);
     url.searchParams.set("locked", "1");
@@ -63,8 +80,9 @@ export async function POST(request: NextRequest) {
     return response;
   }
 
+  const { verifyDashboardCredentials } = await import("@/lib/dashboard-auth");
   if (!verifyDashboardCredentials(username, password)) {
-    const blockedFor = recordDashboardLoginFailure(username);
+    const blockedFor = recordDashboardLoginFailure(address);
     const url = new URL("/login", request.url);
     url.searchParams.set(blockedFor > 0 ? "locked" : "error", "1");
     const response = NextResponse.redirect(url, 303);
@@ -73,7 +91,7 @@ export async function POST(request: NextRequest) {
     return response;
   }
 
-  resetDashboardLoginFailures(username);
+  resetDashboardLoginFailures(address);
   const session = createDashboardSession();
   if (!session) {
     return NextResponse.json({ error: "Dashboard session signing is unavailable." }, { status: 503 });
