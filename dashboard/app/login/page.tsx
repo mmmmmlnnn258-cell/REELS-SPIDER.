@@ -27,7 +27,11 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         ) : (
           <form action="/api/auth/login" method="post" className="space-y-5">
             <input type="hidden" name="next" value={next} />
-            {params.error === "1" ? (
+            {params.locked === "1" ? (
+              <p role="alert" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-ink">
+                Too many failed attempts. Please wait 15 minutes before trying again.
+              </p>
+            ) : params.error === "1" ? (
               <p role="alert" className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-ink">
                 Username or password is incorrect.
               </p>
