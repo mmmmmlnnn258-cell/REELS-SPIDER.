@@ -149,9 +149,9 @@ export function tiktokCredentials(): { clientKey: string; clientSecret: string }
 }
 
 /**
- * Instagram Business Login credentials. The Instagram product uses the app id from
- * Meta App Settings and its Instagram-specific secret (INSTAGRAM_APP_SECRET); the
- * latter is intentionally distinct from META_APP_SECRET when configured.
+ * Instagram Business Login credentials. The Instagram product uses its own app id
+ * and secret from Instagram Business Login settings, distinct from META_APP_ID /
+ * META_APP_SECRET.
  *
  * Read live for the same reason as TikTok: the OAuth flow must use current credentials
  * from the server environment/root .env, never values supplied by the browser.
