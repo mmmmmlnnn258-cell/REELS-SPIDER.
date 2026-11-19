@@ -5,6 +5,7 @@ import {
   DASHBOARD_SESSION_COOKIE,
   DASHBOARD_SESSION_TTL_SECONDS,
   dashboardAuthConfigured,
+  verifyDashboardCredentials,
 } from "@/lib/dashboard-auth";
 import {
   dashboardLoginRetryAfter,
@@ -80,7 +81,6 @@ export async function POST(request: NextRequest) {
     return response;
   }
 
-  const { verifyDashboardCredentials } = await import("@/lib/dashboard-auth");
   if (!verifyDashboardCredentials(username, password)) {
     const blockedFor = recordDashboardLoginFailure(address);
     const url = new URL("/login", request.url);
