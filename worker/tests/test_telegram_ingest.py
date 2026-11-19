@@ -81,6 +81,7 @@ def video_update(update_id=100, chat_id=42):
         "message": {
             "message_id": 9,
             "chat": {"id": chat_id, "type": "private"},
+            "from": {"id": chat_id},
             "caption": "Test Reel caption",
             "video": {
                 "file_id": "telegram-file-id",
@@ -147,6 +148,44 @@ def test_unauthorized_chat_is_ignored_without_downloading(conn, config, tmp_path
     assert conn.execute("SELECT status FROM telegram_ingest_updates").fetchone()["status"] == "ignored"
 
 
+def test_group_video_is_ignored_even_if_group_chat_id_is_allowlisted(conn, config, tmp_path):
+    add_channel(conn)
+    cfg = configured(
+        config,
+        telegram_allowed_chat_ids="-10042",
+        asset_storage_dir=tmp_path / "assets",
+    )
+    client = FakeTelegram()
+    update = video_update(chat_id=-10042)
+    update["message"]["chat"]["type"] = "supergroup"
+    update["message"]["from"] = {"id": 42}
+    assert process_update(conn, cfg, client, update) == "ignored"
+    assert client.file_ids == []
+    assert conn.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0
+
+
+def test_private_video_requires_sender_id_to_match_chat_id(conn, config, tmp_path):
+    add_channel(conn)
+    cfg = configured(config, asset_storage_dir=tmp_path / "assets")
+    client = FakeTelegram()
+    update = video_update()
+    update["message"]["from"] = {"id": 999}
+    assert process_update(conn, cfg, client, update) == "ignored"
+    assert client.file_ids == []
+    assert conn.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0
+
+
+def test_channel_post_is_never_ingested(conn, config, tmp_path):
+    add_channel(conn)
+    cfg = configured(config, telegram_allowed_chat_ids="-10042", asset_storage_dir=tmp_path / "assets")
+    client = FakeTelegram()
+    update = video_update(chat_id=-10042)
+    update["channel_post"] = update.pop("message")
+    assert process_update(conn, cfg, client, update) == "ignored"
+    assert client.file_ids == []
+    assert conn.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0
+
+
 def test_configured_default_channel_is_used(conn, config, tmp_path):
     first = add_channel(conn)
     preferred = add_channel(conn, remote_id="1784999")
@@ -176,7 +215,7 @@ def test_start_command_discloses_own_chat_id_only_in_discovery_mode(conn, config
     client = FakeTelegram()
     update = {
         "update_id": 101,
-        "message": {"chat": {"id": 42}, "text": "/start"},
+        "message": {"chat": {"id": 42, "type": "private"}, "from": {"id": 42}, "text": "/start"},
     }
     assert process_update(conn, cfg, client, update) == "ignored"
     assert client.messages
