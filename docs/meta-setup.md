@@ -22,20 +22,28 @@ real post — staying in **Development mode**, no App Review, no paid tools.
 2. The dashboard is now **use-case based**. Choose **"Manage messaging and content on Instagram."**
    (If you don't see it: **Other → Business** also works, but the Instagram use case is the intended path.)
 3. Name the app, confirm your email, create. It starts in **Development mode** — leave it there.
-4. Copy the **App ID** and **App Secret** (App Settings → Basic) into your `.env`:
-   ```
-   META_APP_ID=...
-   META_APP_SECRET=...
-   ```
+4. Keep the general **App ID** and **App Secret** (App Settings → Basic) as
+   `META_APP_ID` and `META_APP_SECRET`. These are for the Facebook Login / Page
+   integration; they are NOT the Instagram Business Login client credentials.
 
 ## Step 2 — Use the Instagram-Login path (simplest — no Facebook Page)
 1. App Dashboard → **Products** → **Instagram** → **Set up**.
 2. Open **"API setup with Instagram login"** (NOT the Facebook-login one).
-3. Under **Generate access tokens**, click **Add account** → log in with your IG
-   Creator/Business account and authorize.
-4. Click **Generate token** next to the account. Approve the dialog. **Copy the token now —
-   it isn't shown again.** (This first token is short-lived, ~1 hour — see Step 3.)
-5. The same panel shows your **Instagram user id** (a long number). Note it.
+3. In **Business login settings**, copy the Instagram-specific **Instagram App ID**
+   and **Instagram App Secret** into the server environment:
+   ```
+   INSTAGRAM_APP_ID=...
+   INSTAGRAM_APP_SECRET=...
+   INSTAGRAM_REDIRECT_URI=https://your-domain.example/api/channels/instagram/callback
+   ```
+   Register that exact callback URL in the same Instagram Business Login settings.
+   Do not substitute `META_APP_ID` or `META_APP_SECRET` — they are a separate credential pair.
+4. In SocialScheduler → Channels, press **ربط Instagram** on the existing Instagram
+   channel you want to connect. Approve the requested Instagram permissions. The callback
+   verifies the returned account and updates that selected channel; it does not create a
+   duplicate channel.
+5. The dashboard keeps the long-lived token server-side. Never paste an access token into
+   chat, a GitHub issue, or a public file.
    - **Or skip it entirely.** In the dashboard, **Channels → Add channel** → pick
      Instagram, paste the token into **Access token**, then click **"Don't know it? Look
      it up from your access token"** under the id field. The dashboard asks Meta who the
@@ -45,10 +53,8 @@ real post — staying in **Development mode**, no App Review, no paid tools.
      Add-account/Generate-token step is the authorization. ⚠ (Strongly implied by Meta's
      flow; not stated verbatim on one page.)
 
-Then point the worker at the Instagram-Login host — add to `.env`:
-```
-META_GRAPH_BASE=https://graph.instagram.com
-```
+The app selects `graph.instagram.com` automatically for channels connected with
+Instagram Login. Leave `META_GRAPH_BASE` unchanged; it remains the legacy fallback.
 
 ## Step 3 — Turn the short-lived token into a 60-day token
 **The Step 2 token expires in about an hour.** Nothing warns you — the channel will look
