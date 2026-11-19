@@ -131,6 +131,8 @@ test("callback rejects a state mismatch without calling Meta or changing the cha
 
     assert.equal(calls, 0);
     assert.match(response.headers.get("location") ?? "", /instagram_error=/);
+    assert.equal(response.cookies.getAll().some((cookie) => cookie.name === "instagram_oauth_state"), false);
+    assert.equal(response.cookies.getAll().some((cookie) => cookie.name === "instagram_oauth_channel_id"), false);
     assert.equal(channel.access_token, "keep-existing-token");
     assert.equal(channel.instagram_auth_method, "legacy");
   } finally {
@@ -176,6 +178,35 @@ test("declined Instagram authorization leaves channel credentials untouched", as
   }
 });
 
+
+
+test("forged denial callback cannot clear cookies for an active Instagram OAuth attempt", async () => {
+  const { q, GET, suffix } = await setup();
+  const channelId = q.createChannel({
+    platform: "instagram",
+    account_name: `Forged denial ${suffix}`,
+    timezone: "UTC",
+    remote_account_id: "keep-account-id",
+    access_token: "keep-token",
+  });
+
+  const request = new NextRequest(
+    "https://scheduler.example.test/api/channels/instagram/callback?error=access_denied&state=attacker-state",
+    {
+      headers: {
+        cookie: `instagram_oauth_state=valid-state; instagram_oauth_channel_id=${channelId}`,
+      },
+    },
+  );
+  const response = await GET(request);
+  const channel = q.getChannel(channelId)!;
+
+  assert.match(response.headers.get("location") ?? "", /instagram_error=/);
+  assert.equal(response.cookies.getAll().some((cookie) => cookie.name === "instagram_oauth_state"), false);
+  assert.equal(response.cookies.getAll().some((cookie) => cookie.name === "instagram_oauth_channel_id"), false);
+  assert.equal(channel.remote_account_id, "keep-account-id");
+  assert.equal(channel.access_token, "keep-token");
+});
 
 test("callback refuses to connect when Meta did not grant every required permission", async () => {
   const { q, GET, suffix } = await setup();
