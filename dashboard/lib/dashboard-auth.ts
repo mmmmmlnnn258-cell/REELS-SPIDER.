@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 export const DASHBOARD_SESSION_COOKIE = "ss_dashboard_session";
 export const DASHBOARD_SESSION_TTL_SECONDS = 12 * 60 * 60;
@@ -40,9 +40,7 @@ export function createDashboardSession(now = Date.now()): {
   const key = secret();
   if (!key || !dashboardAuthConfigured()) return null;
   const expiresAt = Math.floor(now / 1000) + DASHBOARD_SESSION_TTL_SECONDS;
-  const nonce = createHash("sha256")
-    .update(`${now}:${Math.random()}:${process.pid}`)
-    .digest("hex");
+  const nonce = randomBytes(32).toString("hex");
   const payload = `${expiresAt}.${nonce}`;
   return { token: `${payload}.${signature(payload, key)}`, expiresAt };
 }
