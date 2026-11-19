@@ -159,13 +159,10 @@ export function tiktokCredentials(): { clientKey: string; clientSecret: string }
 export function instagramCredentials(): { clientId: string; clientSecret: string } {
   const env = liveEnv();
   return {
-    clientId: process.env.META_APP_ID ?? env.META_APP_ID ?? "",
-    clientSecret:
-      process.env.INSTAGRAM_APP_SECRET ??
-      env.INSTAGRAM_APP_SECRET ??
-      process.env.META_APP_SECRET ??
-      env.META_APP_SECRET ??
-      "",
+    // Instagram Business Login has its own client id/secret pair under the
+    // Instagram product settings; never substitute the general Meta App credentials.
+    clientId: process.env.INSTAGRAM_APP_ID ?? env.INSTAGRAM_APP_ID ?? "",
+    clientSecret: process.env.INSTAGRAM_APP_SECRET ?? env.INSTAGRAM_APP_SECRET ?? "",
   };
 }
 
