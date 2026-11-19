@@ -12,7 +12,7 @@ Set these values before deploying the protected dashboard:
 
 Do not commit real values, place them in source code, or share them in chat. Store them only in the deployment platform's secret/environment-variable manager. If any value is missing or the session secret is shorter than 32 characters, login fails closed and protected pages/APIs remain inaccessible.
 
-The login cookie is HTTP-only, Secure in production, SameSite=Strict, and expires after 12 hours. Session signatures are verified on the server. Unsafe API requests also require a same-origin Origin header.
+The login cookie is HTTP-only, Secure in production, SameSite=Lax, and expires after 12 hours. Session signatures are verified on the server. Unsafe API requests also require a same-origin Origin header.
 
 ## OAuth callback exceptions
 
