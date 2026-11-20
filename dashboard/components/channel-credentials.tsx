@@ -17,11 +17,13 @@ export function ChannelCredentials({
   platform,
   remoteAccountId,
   instagramAuthMethod,
+  hasAccessToken,
 }: {
   channelId: number;
   platform: string;
   remoteAccountId: string | null;
   instagramAuthMethod?: string;
+  hasAccessToken?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -62,13 +64,16 @@ export function ChannelCredentials({
   // Instagram Login credentials are written only by the verified OAuth callback.
   // Keep the legacy editor for older Facebook Login/legacy channels, but never offer
   // a manual token or account-id editor for an OAuth-managed Instagram Login channel.
-  if (platform === "instagram" && instagramAuthMethod === "instagram_login") {
+  if (
+    platform === "instagram" &&
+    (instagramAuthMethod === "instagram_login" || !hasAccessToken)
+  ) {
     return (
       <div className="mt-3 rounded-lg border border-border bg-surface-sunken/40 p-3">
         <p className="text-xs font-medium text-ink-soft">Instagram credentials</p>
         <p className="mt-1 text-[11px] text-muted">
-          تُدار بيانات الاتصال بأمان عبر Instagram OAuth. استخدم زر «Reconnect Instagram»
-          على البطاقة لتجديد الربط؛ لا حاجة لنسخ أي رمز وصول يدوياً.
+          تُدار بيانات الاتصال عبر Instagram OAuth. استخدم زر «ربط Instagram» أو
+          «Reconnect Instagram» على البطاقة؛ لا حاجة لإدخال رقم الحساب أو نسخ رمز وصول يدوياً.
         </p>
       </div>
     );
