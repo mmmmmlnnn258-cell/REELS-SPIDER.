@@ -41,7 +41,11 @@ RETRY_AFTER = timedelta(hours=1)
 
 _PLATFORMS = ("instagram", "threads", "facebook")
 
-RECONNECT = "Reconnect it: Channels → Credentials → Edit, paste a new token."
+def _reconnect_for(channel, config) -> str:
+    """Give recovery instructions that match the channel credential flow."""
+    if channel["platform"] == "instagram" and _uses_instagram_login(channel, config):
+        return "Reconnect it: Channels → select this channel → Connect Instagram."
+    return "Reconnect it: Channels → Credentials → Edit, update the platform token."
 
 
 class _Transient(Exception):
@@ -137,7 +141,7 @@ def _check_threads(session, config, channel, now: datetime) -> dict:
         session, f"{THREADS_BASE}/{config.threads_api_version}/debug_token", token, token
     )
     if not info.get("is_valid"):
-        return {"token_error": f"Meta says this Threads token is no longer valid. {RECONNECT}"}
+        return {"token_error": f"Meta says this Threads token is no longer valid. {_reconnect_for(channel, config)}"}
     expires = _from_epoch(info.get("expires_at"))
     update = {"token_expires_at": expires.isoformat() if expires else None, "token_error": None}
     if expires and expires - now <= RENEW_WITHIN:
@@ -147,7 +151,7 @@ def _check_threads(session, config, channel, now: datetime) -> dict:
             ))
         except _MetaError as exc:
             # Keep the expiry we just learned — the card's countdown is the warning.
-            update["token_error"] = f"Automatic renewal failed: {exc}. {RECONNECT}"
+            update["token_error"] = f"Automatic renewal failed: {exc}. {_reconnect_for(channel, config)}"
     return update
 
 
@@ -180,7 +184,7 @@ def _check_via_app_token(session, config, channel, now: datetime) -> dict:
         f"{config.meta_app_id}|{config.meta_app_secret}",
     )
     if not info.get("is_valid"):
-        return {"token_error": f"Meta says this token is no longer valid. {RECONNECT}"}
+        return {"token_error": f"Meta says this token is no longer valid. {_reconnect_for(channel, config)}"}
     expires = _from_epoch(info.get("expires_at"))
     update = {"token_expires_at": expires.isoformat() if expires else None, "token_error": None}
     if expires and expires - now <= RENEW_WITHIN:
@@ -189,7 +193,7 @@ def _check_via_app_token(session, config, channel, now: datetime) -> dict:
             # %b plus .day, not %-d: that flag does not exist on Windows.
             f"This token expires {expires:%b} {expires.day} and can't be renewed "
             f"automatically. "
-            f"{RECONNECT}"
+            f"{_reconnect_for(channel, config)}"
         )
     return update
 
@@ -221,9 +225,9 @@ def check_channel(conn, config, channel, now: datetime, session=None, logger=Non
         return "retry"
     except _MetaError as exc:
         if exc.code == 190:
-            message = f"Meta says this token is no longer valid ({exc}). {RECONNECT}"
+            message = f"Meta says this token is no longer valid ({exc}). {_reconnect_for(channel, config)}"
         else:
-            message = f"Automatic renewal failed: {exc}. {RECONNECT}"
+            message = f"Automatic renewal failed: {exc}. {_reconnect_for(channel, config)}"
         update = {"token_error": message}
 
     update["token_next_check_at"] = (now + CHECK_EVERY).isoformat()
