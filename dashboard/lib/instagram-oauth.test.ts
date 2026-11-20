@@ -4,6 +4,7 @@ import {
   INSTAGRAM_SCOPES,
   createInstagramOAuthState,
   instagramAuthorizeUrl,
+  instagramUnifiedAuthorizeUrl,
   instagramCallbackUri,
 } from "./instagram-oauth";
 import { instagramCredentials, instagramRedirectUri } from "./config";
@@ -87,4 +88,23 @@ test("Instagram OAuth uses its own app id and secret, never Meta app credentials
   delete process.env.INSTAGRAM_APP_ID;
   delete process.env.INSTAGRAM_APP_SECRET;
   assert.deepEqual(instagramCredentials(), { clientId: "", clientSecret: "" });
+});
+
+test("Unified Login URL uses config_id and does not send classic scope parameters", () => {
+  const url = new URL(instagramUnifiedAuthorizeUrl({
+    clientId: "meta-app-id",
+    configId: "business-login-config-id",
+    redirectUri: "https://example.test/api/channels/instagram/callback",
+    state: "random-state",
+    graphVersion: "v26.0",
+  }));
+  assert.equal(url.origin + url.pathname, "https://www.facebook.com/v26.0/dialog/oauth");
+  assert.equal(url.searchParams.get("client_id"), "meta-app-id");
+  assert.equal(url.searchParams.get("config_id"), "business-login-config-id");
+  assert.equal(url.searchParams.get("redirect_uri"), "https://example.test/api/channels/instagram/callback");
+  assert.equal(url.searchParams.get("response_type"), "code");
+  assert.equal(url.searchParams.get("override_default_response_type"), "true");
+  assert.equal(url.searchParams.get("state"), "random-state");
+  assert.equal(url.searchParams.has("scope"), false);
+  assert.equal(url.searchParams.has("enable_fb_login"), false);
 });
