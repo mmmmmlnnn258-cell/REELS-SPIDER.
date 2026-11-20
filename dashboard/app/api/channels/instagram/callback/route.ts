@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectInstagramChannel, getChannel } from "@/lib/queries";
+import { getDb } from "@/lib/db";
 import { config, instagramCredentials, instagramRedirectUri } from "@/lib/config";
 import { INSTAGRAM_GRAPH_BASE, INSTAGRAM_SCOPES } from "@/lib/instagram-oauth";
 
@@ -49,10 +50,16 @@ function back(
     response.cookies.delete(STATE_COOKIE);
     response.cookies.delete(CHANNEL_COOKIE);
     response.cookies.delete(MODE_COOKIE);
+    response.cookies.delete("instagram_telegram_ticket");
   }
   return response;
 }
 
+function recordTelegramTicketSuccess(ticketHash: string | undefined, channelId: number, username: string, accountId: string) {
+  if (!ticketHash || !/^[a-f0-9]{64}$/.test(ticketHash)) return;
+  getDb().prepare("UPDATE telegram_account_link_tickets SET status='connected', result_account_name=?, result_account_id=?, failure_reason=NULL WHERE ticket_hash=? AND status='pending' AND consumed_at IS NOT NULL AND channel_id=? AND platform='instagram'")
+    .run(username.slice(0, 160), accountId.slice(0, 160), ticketHash, channelId);
+}
 function grantedPermissions(value: string | string[] | undefined): Set<string> {
   const entries = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
   return new Set(entries.map((permission) => permission.trim()).filter(Boolean));
@@ -82,6 +89,7 @@ async function finishUnifiedLogin(
   redirectUri: string,
   channelId: number,
   code: string,
+  telegramTicketHash?: string,
 ) {
   const { metaAppId, metaAppSecret, graphVersion } = config;
   if (!metaAppId || !metaAppSecret) {
@@ -193,6 +201,7 @@ async function finishUnifiedLogin(
         instagram_error: "The selected Instagram channel no longer exists. No credentials were changed.",
       });
     }
+    recordTelegramTicketSuccess(telegramTicketHash, channelId, username, remoteAccountId);
     return back(redirectUri, {
       instagram_connected: String(channelId),
       instagram_username: username,
@@ -219,6 +228,7 @@ export async function GET(req: NextRequest) {
   const expectedState = req.cookies.get(STATE_COOKIE)?.value;
   const targetId = Number(req.cookies.get(CHANNEL_COOKIE)?.value);
   const oauthMode = req.cookies.get(MODE_COOKIE)?.value ?? "instagram_login";
+  const telegramTicketHash = req.cookies.get("instagram_telegram_ticket")?.value;
 
   // Validate the browser-bound state before handling either success or denial.
   // A forged error callback must not clear cookies belonging to a real OAuth attempt.
@@ -252,7 +262,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (oauthMode === "unified_login") {
-    return finishUnifiedLogin(redirectUri, targetId, code);
+    return finishUnifiedLogin(redirectUri, targetId, code, telegramTicketHash);
   }
   if (oauthMode !== "instagram_login") {
     return back(redirectUri, {
@@ -389,6 +399,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    recordTelegramTicketSuccess(telegramTicketHash, targetId, identity.username, remoteAccountId);
     return back(redirectUri, {
       instagram_connected: String(targetId),
       instagram_username: identity.username,
