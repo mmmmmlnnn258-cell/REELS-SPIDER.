@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from worker.telegram_ingest import process_update
 
 
@@ -221,3 +223,64 @@ def test_start_command_discloses_own_chat_id_only_in_discovery_mode(conn, config
     assert client.messages
     assert "42" in client.messages[0][1]
     assert conn.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0
+
+
+def test_telegram_receiver_uses_fresh_db_connections_for_poll_and_each_update(
+    conn, config, monkeypatch
+):
+    import logging
+    import sqlite3
+    import threading
+
+    from worker import db
+    from worker import telegram_ingest
+
+    cfg = configured(config)
+    stop_event = threading.Event()
+    opened = []
+    real_connect = db.connect
+
+    def tracked_connect(path):
+        connection = real_connect(path)
+        opened.append(connection)
+        return connection
+
+    class PollingTelegram(FakeTelegram):
+        def __init__(self, timeout=60):
+            super().__init__()
+            self.polls = 0
+
+        def get_updates(self, token, offset=None, timeout=20):
+            self.polls += 1
+            assert offset is None
+            return [{
+                "update_id": 500,
+                "message": {
+                    "text": "/start",
+                    "chat": {"id": 42, "type": "private"},
+                    "from": {"id": 42},
+                },
+            }]
+
+        def send_message(self, token, chat_id, text, reply_markup=None):
+            self.messages.append((chat_id, text, reply_markup))
+            stop_event.set()
+            return {"message_id": 1}
+
+    client = PollingTelegram()
+    monkeypatch.setattr(telegram_ingest.db, "connect", tracked_connect)
+    monkeypatch.setattr(telegram_ingest, "TelegramClient", lambda timeout=60: client)
+
+    telegram_ingest.run_forever(cfg, logging.getLogger("telegram-test"), stop_event)
+
+    # One short-lived connection reads the polling offset and a separate one handles
+    # /start. Both must be closed when the receiver exits.
+    assert len(opened) == 2
+    assert len(client.messages) == 1
+    keyboard = client.messages[0][2]["inline_keyboard"]
+    buttons = [button for row in keyboard for button in row]
+    assert any(button["callback_data"] == "bs:accounts" for button in buttons)
+    assert any(button["callback_data"] == "bs:account:add" for button in buttons)
+    for connection in opened:
+        with pytest.raises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")
