@@ -1,6 +1,7 @@
 import "server-only";
 import type DatabaseType from "better-sqlite3";
 import { getDb, nowIso } from "./db";
+import { encryptInstagramAccessToken } from "./token-crypto";
 import { isBlocked } from "./format";
 import { FINISHED_STATUSES_SQL } from "./queue-sections";
 import type {
@@ -196,6 +197,7 @@ export function connectInstagramChannel(input: {
         WHERE id = @channelId AND platform = 'instagram'`,
     ).run({
       ...input,
+      accessToken: encryptInstagramAccessToken(input.accessToken),
       updatedAt: nowIso(),
     });
     return "connected" as const;
