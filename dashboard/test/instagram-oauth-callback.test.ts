@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
 import { makeTestDb } from "./helpers.ts";
+import { decryptInstagramAccessToken } from "../lib/token-crypto.ts";
 
 let setupPromise: Promise<{
   q: typeof import("../lib/queries.ts");
@@ -93,7 +94,7 @@ test("callback exchanges tokens server-side and stores Instagram Login on the se
     assert.equal(location.includes("long-lived-secret"), false);
     assert.deepEqual(requested.length, 3);
     assert.equal(channel.remote_account_id, "ig-user-900");
-    assert.equal(channel.access_token, "long-lived-secret");
+    assert.equal(decryptInstagramAccessToken(channel.access_token), "long-lived-secret");
     assert.equal(channel.instagram_auth_method, "instagram_login");
     assert.equal(channel.account_name, `Callback target ${suffix}`);
     assert.equal(channel.business_label, "Keep label");
