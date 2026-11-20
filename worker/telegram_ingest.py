@@ -9,6 +9,7 @@ import hashlib
 import logging
 import mimetypes
 import os
+import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -356,28 +357,65 @@ def run_forever(config, logger: logging.Logger, stop_event: threading.Event, cli
         )
 
     client = TelegramClient(timeout=max(45, config.telegram_poll_timeout + 15))
-    conn = db.connect(config.database_path)
-    logger.info("Telegram video receiver started; allowed chat count=%d", len(allowed))
+    logger.info("Telegram control/video receiver started; allowed chat count=%d", len(allowed))
     try:
         while not stop_event.is_set():
-            row = conn.execute(
-                "SELECT MAX(update_id) AS last_id FROM telegram_ingest_updates"
-            ).fetchone()
-            offset = int(row["last_id"]) + 1 if row and row["last_id"] is not None else None
             try:
+                # Never keep a SQLite connection open while Telegram long-polling. Read
+                # the durable offset on a short-lived connection, then close it before
+                # making the network request.
+                offset_conn = db.connect(config.database_path)
+                try:
+                    row = offset_conn.execute(
+                        "SELECT MAX(update_id) AS last_id FROM telegram_ingest_updates"
+                    ).fetchone()
+                    offset = int(row["last_id"]) + 1 if row and row["last_id"] is not None else None
+                finally:
+                    offset_conn.close()
+
                 updates = client.get_updates(
                     token, offset=offset, timeout=config.telegram_poll_timeout
                 )
                 for update in updates or []:
                     if stop_event.is_set():
                         break
-                    from .telegram_control import process_control_update
-                    if process_control_update(conn, config, client, update, graph_client_for=client_for):
-                        message = update.get("message") or (update.get("callback_query") or {}).get("message") or {}
-                        chat = message.get("chat") or {}
-                        _record_update(conn, int(update["update_id"]), str(chat.get("id", "")) or None, "ignored")
-                    else:
-                        process_update(conn, config, client, update, logger)
+                    update_id = int(update["update_id"])
+                    # Each update gets a fresh connection. If a handler raises while a
+                    # transaction is open, closing this connection rolls it back; the
+                    # next poll retries the same Telegram update because its ID was not
+                    # durably recorded. A failed handler can no longer poison the
+                    # receiver's connection for every later /start or callback.
+                    update_conn = db.connect(config.database_path)
+                    try:
+                        from .telegram_control import process_control_update
+                        if process_control_update(
+                            update_conn, config, client, update, graph_client_for=client_for
+                        ):
+                            message = update.get("message") or (
+                                update.get("callback_query") or {}
+                            ).get("message") or {}
+                            chat = message.get("chat") or {}
+                            _record_update(
+                                update_conn, update_id,
+                                str(chat.get("id", "")) or None, "ignored",
+                            )
+                        else:
+                            process_update(update_conn, config, client, update, logger)
+                    except sqlite3.OperationalError as exc:
+                        message = str(exc).lower()
+                        if "locked" not in message and "busy" not in message:
+                            raise
+                        logger.warning(
+                            "Telegram update %s deferred because SQLite is busy; "
+                            "it remains unacknowledged and will be retried: %s",
+                            update_id, exc,
+                        )
+                        # Do not process later updates out of order. The next getUpdates
+                        # call uses the last durable ID and Telegram redelivers this one.
+                        stop_event.wait(1)
+                        break
+                    finally:
+                        update_conn.close()
             except TelegramAPIError as exc:
                 logger.error("Telegram polling failed: %s", exc)
                 stop_event.wait(5)
@@ -385,5 +423,4 @@ def run_forever(config, logger: logging.Logger, stop_event: threading.Event, cli
                 logger.exception("Unexpected Telegram receiver error")
                 stop_event.wait(5)
     finally:
-        conn.close()
         logger.info("Telegram video receiver stopped.")
