@@ -318,8 +318,8 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const target = getChannel(targetId);
-  if (!target || target.platform !== "instagram") {
+  const target = telegramTicketHash ? null : getChannel(targetId);
+  if (!telegramTicketHash && (!target || target.platform !== "instagram")) {
     return back(redirectUri, {
       instagram_error: "The selected Instagram channel no longer exists. No credentials were changed.",
     });
