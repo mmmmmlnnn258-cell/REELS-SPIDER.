@@ -24,7 +24,6 @@ export function getDb(): Database.Database {
   // readers, but writers still serialize; wait for short worker/dashboard writes
   // instead of failing with SQLITE_BUSY after better-sqlite3's shorter default.
   db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-  db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   _db = db;
   return db;
