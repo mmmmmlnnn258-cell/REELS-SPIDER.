@@ -53,6 +53,12 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
+  if (platform === "instagram" && body.instagram_unified_login !== undefined) {
+    return NextResponse.json(
+      { error: "Instagram Unified Login can only be selected by completing the official OAuth flow." },
+      { status: 400 }
+    );
+  }
   // Non-legacy Instagram auth methods require credentials verified by OAuth.
   // New channels start as legacy; the Instagram callback is the only path that may
   // atomically attach an Instagram Login token and switch the method.
