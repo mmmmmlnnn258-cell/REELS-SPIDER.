@@ -38,6 +38,41 @@ def _session_expired(created_at: str, minutes: int = 20) -> bool:
     return datetime.now(timezone.utc) - created > timedelta(minutes=minutes)
 
 
+def _instagram_dm_window(messages: list[dict], recipient_id: str,
+                          now: datetime) -> tuple[bool, str]:
+    """Require a recent inbound customer message before using Instagram Send API.
+
+    A private reply to a comment is a separate one-message path; normal conversation
+    replies are limited to 24 hours after the recipient's latest inbound message.
+    Fail closed when Meta does not provide a trustworthy inbound timestamp.
+    """
+    inbound = []
+    for message in messages:
+        sender = message.get("from") or {}
+        if str(sender.get("id") or "") != str(recipient_id):
+            continue
+        raw = message.get("created_time")
+        if not raw:
+            continue
+        try:
+            stamp = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            continue
+        inbound.append(stamp.astimezone(timezone.utc))
+
+    if not inbound:
+        return False, "لم تصل رسالة حديثة موثقة من العميل؛ لم يتم إرسال الرد."
+    latest = max(inbound)
+    age = now.astimezone(timezone.utc) - latest
+    if age < timedelta(minutes=-5):
+        return False, "وقت آخر رسالة من العميل غير صالح؛ لم يتم إرسال الرد."
+    if age > timedelta(hours=24):
+        return False, "انتهت مهلة Meta البالغة 24 ساعة منذ آخر رسالة من العميل؛ اطلب منه مراسلتك مجدداً."
+    return True, ""
+
+
 def _local_stamp(value: str, timezone_name: str) -> str:
     try:
         stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -822,6 +857,25 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(channel, graph) else str(channel["linked_page_id"] or "")
                 if not messaging_id:
                     raise RuntimeError("يلزم ربط صفحة Facebook لإرسال الرسائل عبر Facebook Login.")
+                # Re-fetch at confirmation time: the inbox preview may have been opened
+                # while the 24-hour window was valid and confirmed after it closed.
+                _, latest_messages = graph.get_instagram_conversation_messages(
+                    row["conversation_id"], channel["access_token"])
+                window_open, window_error = _instagram_dm_window(
+                    latest_messages, row["recipient_id"], now_dt)
+                if not window_open:
+                    with conn:
+                        conn.execute(
+                            "UPDATE telegram_dm_outbox SET status='cancelled',last_error=?,updated_at=? WHERE id=?",
+                            (window_error, datetime.now(timezone.utc).isoformat(), outbox_id),
+                        )
+                    from .operation_log import mark_operation_notified, record_manual_dm_outcome
+                    event = record_manual_dm_outcome(
+                        conn, outbox_id, status="info", detail=window_error)
+                    _send(client, token, chat_id, f"⛔ {window_error}", _menu())
+                    if event:
+                        mark_operation_notified(conn, int(event["id"]))
+                    return True
                 result = graph.send_instagram_direct_message(
                     messaging_id, row["recipient_id"], row["message_text"], channel["access_token"])
                 meta_message_id = str(result.get("message_id") or result.get("id") or "")
