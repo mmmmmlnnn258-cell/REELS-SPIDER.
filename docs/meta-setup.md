@@ -400,3 +400,25 @@ selected, those channels get deselected automatically, because they can't publis
 and if a text post ever did reach the worker aimed at one of them anyway, the worker itself
 would refuse it outright (a clear, permanent failure, not a retry) rather than silently
 dropping the text or guessing at an image.
+
+
+## Instagram Login token encryption
+
+Instagram Login access tokens are stored in SQLite as versioned AES-256-GCM envelopes.
+The dashboard encrypts the token when OAuth completes; the Python worker decrypts it
+inside its SQLite row boundary and encrypts any renewed token before writing it back.
+Existing plaintext legacy/Facebook Login/TikTok credentials are left unchanged.
+
+Set `TOKEN_ENCRYPTION_KEY` in the shared runtime environment before completing the
+first Instagram Login connection. It must be canonical Base64 encoding of exactly 32
+random bytes. Generate one with:
+
+```sh
+python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
+```
+
+Use the SAME key for the dashboard and worker and every replica sharing the database.
+Do not commit the key or put it in client-visible settings. Keep a secure backup: losing
+or changing it without re-encrypting the stored tokens makes those Instagram Login
+connections unreadable. Missing or incorrect keys and tampered ciphertext fail closed;
+legacy plaintext tokens remain readable.
