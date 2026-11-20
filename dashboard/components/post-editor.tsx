@@ -69,7 +69,7 @@ export function PostEditor({
   assets: Asset[];
   /** assetId -> scheduled-but-unsent sends, for the framing dialog's warning. */
   scheduledSendCounts: Record<number, number>;
-  channels: Channel[];
+  channels: Pick<Channel, "id" | "account_name" | "platform" | "requires_approval" | "color_hue" | "avatar_path">[];
   sends: PostPublicationRow[];
   sendableChannels: Channel[];
   periods: Period[];
