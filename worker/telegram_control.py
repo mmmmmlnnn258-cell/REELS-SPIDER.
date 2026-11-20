@@ -538,61 +538,42 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             _send(client, token, chat_id, body, {"inline_keyboard": keyboard})
             return True
 
-        if data.startswith("bs:account:link:"):
-            raw_id = data.removeprefix("bs:account:link:")
-            if not raw_id.isdigit():
-                _send(client, token, chat_id, "رقم قناة غير صالح.", _menu())
-                return True
-            channel_id = int(raw_id)
-            channel = conn.execute("SELECT id, platform, account_name FROM channels WHERE id=?", (channel_id,)).fetchone()
+        if data == "bs:account:add":
             base = str(getattr(config, "telegram_dashboard_url", "") or "").strip().rstrip("/")
-            if not channel or channel["platform"] != "instagram" or not base.startswith("https://"):
-                _send(client, token, chat_id, "تعذر بدء ربط Instagram. تحقق من القناة وإعداد رابط HTTPS للوحة التحكم.", _menu())
+            if not base.startswith("https://"):
+                _send(client, token, chat_id, "تعذر بدء ربط Instagram. تحقق من إعداد رابط HTTPS للوحة التحكم.", _menu())
                 return True
-            ticket = create_link_ticket(conn, chat_id=chat_id, user_id=sender_id, channel_id=channel_id, platform="instagram")
+            ticket = create_link_ticket(conn, chat_id=chat_id, user_id=sender_id, platform="instagram")
             url = base + "/api/channels/instagram/telegram?" + urlencode({"ticket": ticket.token})
-            _send(client, token, chat_id, "افتح الرابط لإكمال ربط Instagram خلال 10 دقائق. لا ترسل كلمة المرور أو رمز التحقق للبوت.", {"inline_keyboard": [[{"text": "فتح تسجيل دخول Instagram", "url": url}]]})
+            _send(client, token, chat_id, "افتح الرابط لإضافة حساب Instagram خلال 10 دقائق. سجّل الدخول في صفحة Instagram الرسمية؛ لا ترسل كلمة المرور أو رمز التحقق للبوت.", {"inline_keyboard": [[{"text": "➕ تسجيل دخول Instagram", "url": url}]]})
             return True
         if data == "bs:accounts":
             rows = conn.execute(
-                """SELECT id, platform, account_name, remote_account_id, linked_page_id,
-                          access_token, is_active
-                     FROM channels
-                    WHERE platform = 'instagram'
-                    ORDER BY platform, id"""
+                """SELECT id, instagram_user_id, username, status, token_expires_at,
+                          last_verified_at
+                     FROM instagram_accounts
+                    WHERE telegram_chat_id=? AND telegram_user_id=?
+                    ORDER BY created_at DESC, id DESC""",
+                (chat_id, sender_id),
             ).fetchall()
-            link_buttons = []
+            lines = ["👤 حسابات Instagram المرتبطة"]
             if not rows:
-                body = (
-                    "👤 الحسابات المرتبطة\n"
-                    "لا توجد حسابات Instagram محفوظة حتى الآن."
-                )
+                lines.append("\nلا توجد حسابات مرتبطة حتى الآن.")
             else:
-                labels = {"instagram": "Instagram"}
-                lines = ["👤 الحسابات المرتبطة"]
                 for row in rows:
-                    platform = labels.get(row["platform"], row["platform"])
-                    has_identity = bool(str(row["remote_account_id"] or "").strip())
-                    has_token = bool(str(row["access_token"] or "").strip())
-                    if row["is_active"] and has_identity and has_token:
-                        state = "✅ متصل ونشط"
-                    elif has_identity and has_token:
-                        state = "⏸ متصل لكنه غير نشط"
-                    else:
-                        state = "⚠️ الربط غير مكتمل"
+                    state = {
+                        "connected": "✅ متصل",
+                        "expired": "⌛ انتهت صلاحية الاتصال",
+                        "revoked": "⛔ تم إلغاء الصلاحية",
+                        "error": "⚠️ يحتاج إلى إعادة ربط",
+                    }.get(row["status"], "⚠️ حالة غير معروفة")
                     lines.append(
-                        f"\n#{row['id']} · {platform}\n"
-                        f"الاسم: {row['account_name'] or 'غير محدد'}\n"
-                        f"المعرّف: {row['remote_account_id'] or 'غير متوفر'}\n"
+                        f"\n@{row['username']}\n"
+                        f"المعرّف: {row['instagram_user_id']}\n"
                         f"الحالة: {state}"
                     )
-                body = "\n".join(lines)[:3300]
-            link_buttons = [
-                [{"text": "🔗 ربط / تحديث Instagram #{}".format(row["id"]), "callback_data": "bs:account:link:{}".format(row["id"])}]
-                for row in rows
-            ]
-            _send(client, token, chat_id, body, {"inline_keyboard": [
-                *link_buttons,
+            _send(client, token, chat_id, "\n".join(lines)[:3300], {"inline_keyboard": [
+                [{"text": "➕ إضافة حساب Instagram", "callback_data": "bs:account:add"}],
                 [{"text": "🔄 تحديث", "callback_data": "bs:accounts"}],
                 [{"text": "↩ القائمة", "callback_data": "bs:menu"}],
             ]})
