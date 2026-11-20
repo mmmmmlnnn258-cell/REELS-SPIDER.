@@ -47,6 +47,7 @@ function back(
   if (clearOAuthCookies) {
     response.cookies.delete(STATE_COOKIE);
     response.cookies.delete(CHANNEL_COOKIE);
+    response.cookies.delete(MODE_COOKIE);
   }
   return response;
 }
