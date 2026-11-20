@@ -65,7 +65,7 @@ test("callback exchanges tokens server-side and stores Instagram Login on the se
     const url = String(input);
     requested.push(url);
     if (url.startsWith("https://api.instagram.com/oauth/access_token")) {
-      return jsonResponse({ data: [{ access_token: "short-lived-secret", user_id: "app-scoped-id", permissions: "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages,instagram_business_manage_insights" }] });
+      return jsonResponse({ data: [{ access_token: "short-lived-secret", user_id: "app-scoped-id", permissions: "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages" }] });
     }
     if (url.startsWith("https://graph.instagram.com/access_token?")) {
       assert.match(url, /grant_type=ig_exchange_token/);
@@ -229,7 +229,7 @@ test("callback refuses to connect when Meta did not grant every required permiss
         data: [{
           access_token: "short-lived-secret",
           user_id: "app-scoped-id",
-          permissions: "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages",
+          permissions: "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments",
         }],
       });
     }
@@ -243,7 +243,7 @@ test("callback refuses to connect when Meta did not grant every required permiss
 
     assert.equal(calls, 1);
     assert.match(location, /instagram_error=/);
-    assert.match(new URL(location).searchParams.get("instagram_error") ?? "", /Missing: instagram_business_manage_insights/);
+    assert.match(new URL(location).searchParams.get("instagram_error") ?? "", /Missing: instagram_business_manage_messages/);
     assert.equal(channel.remote_account_id, null);
     assert.equal(channel.access_token, null);
     assert.equal(channel.instagram_auth_method, "legacy");
@@ -266,7 +266,7 @@ test("callback refuses an ambiguous Meta identity response without storing crede
     const url = String(input);
     if (url.startsWith("https://api.instagram.com/oauth/access_token")) {
       return jsonResponse({
-        data: [{ access_token: "short-lived-secret", user_id: "app-scoped-id", permissions: "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages,instagram_business_manage_insights" }],
+        data: [{ access_token: "short-lived-secret", user_id: "app-scoped-id", permissions: "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages" }],
       });
     }
     if (url.startsWith("https://graph.instagram.com/access_token?")) {
@@ -310,7 +310,7 @@ test("callback also accepts Meta's flat OAuth token and /me identity responses",
       return jsonResponse({
         access_token: "flat-short-lived-secret",
         user_id: "app-scoped-id",
-        permissions: "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages,instagram_business_manage_insights",
+        permissions: "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages",
       });
     }
     if (url.startsWith("https://graph.instagram.com/access_token?")) {
