@@ -106,20 +106,21 @@ account owner. Do not schedule a post in the past as a substitute for a controll
 
 ---
 
-## Before onboarding paying customers
+## Connecting additional Instagram accounts in private use
 
-The Development-mode setup above is for the app owner and people who have an eligible role on the Meta app. It is **not** a public customer rollout.
+BLACK SPIDER is configured as a private, owner-operated deployment. It does not require
+customer registration, customer workspaces, subscriptions, or separate bots.
 
-Before allowing unrelated customers to connect their own Instagram accounts:
+While the Meta app remains in **Development mode**, connect only Instagram accounts that
+are eligible under Meta's app roles/tester rules. If you want to connect an account whose
+owner does not have an eligible role on the app, Meta may require App Review and Advanced
+Access for the relevant Instagram Login permissions. Check the current requirements in
+Meta's developer dashboard before attempting that connection.
 
-1. Complete Meta App Review and obtain **Advanced Access** for every permission the product actually uses, including the four documented Instagram Login scopes: `instagram_business_basic`,
-   `instagram_business_content_publish`, `instagram_business_manage_comments`, and
-   `instagram_business_manage_messages`. Standard Access is limited to people with a role on the app; Advanced Access is required for ordinary users.
-2. If the app was created or claimed by a business, check Meta's **Tech Provider verification** requirement. Meta states that business-created/claimed apps cannot receive certain business permissions from users outside the app's roles unless the owning business is verified as a Tech Provider. This verification is separate from App Review; both may be required.
-3. Complete any business verification and data-handling requirements Meta presents, then test OAuth with a non-role customer account before announcing availability.
-4. Keep each customer's Instagram account connected only to their own authorized workspace/channel. Do not share access tokens between customers.
-
-These are Meta platform approval requirements, not steps that a code change or a successful CI run can bypass. Approval is controlled by Meta and is not guaranteed.
+If Meta requires business verification or Tech Provider verification for the access level
+you request, complete those steps with Meta. These platform approvals cannot be bypassed
+by code changes or successful CI. Keep the deployment private and connect only accounts
+you own or are explicitly authorized to manage.
 
 Official Meta references:
 - [App Review and Advanced Access](https://developers.facebook.com/docs/resp-plat-initiatives/app-review/introduction)
