@@ -23,6 +23,7 @@ class FakeGraph:
         self.fail = fail
         self.base = "https://graph.instagram.com/v25.0"
         self.sent = []
+        self.last_inbound_at = datetime.now(timezone.utc).isoformat()
         self.conversations = [{
             "id": "9001", "updated_time": "2026-11-18T12:00:00+0000",
             "participants": {"data": [
@@ -46,7 +47,7 @@ class FakeGraph:
             raise RuntimeError("permission denied")
         return ({"id": conversation_id, "participants": self.conversations[0]["participants"]},
                 [{"id": "m1", "from": {"id": "person-77", "username": "customer"},
-                  "message": "مرحبا", "created_time": "2026-11-18T12:00:00+0000"}])
+                  "message": "مرحبا", "created_time": self.last_inbound_at}])
 
     def send_instagram_direct_message(self, ig_user_id, recipient_id, message, token):
         if self.fail:
@@ -131,6 +132,27 @@ def test_dm_reply_requires_preview_and_explicit_confirmation(conn, config):
     assert conn.execute(
         "SELECT notified_at FROM telegram_operation_log WHERE event_type='رسالة خاصة يدوية'"
     ).fetchone()[0]
+
+
+def test_dm_reply_is_blocked_after_instagram_24_hour_window(conn, config):
+    channel = connected_channel(conn)
+    now = datetime.now(timezone.utc).isoformat()
+    outbox = conn.execute(
+        """INSERT INTO telegram_dm_outbox(chat_id,channel_id,conversation_id,recipient_id,
+             message_text,status,created_at,updated_at)
+           VALUES('7441755677',?,'9001','person-77','hello','pending',?,?)""",
+        (channel, now, now),
+    ).lastrowid
+    conn.commit()
+    graph = FakeGraph()
+    graph.last_inbound_at = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+    client = FakeTelegram()
+
+    process_control_update(conn, cfg(config), client, cb(19, f"bs:dm:send:{outbox}"), lambda _: graph)
+
+    assert graph.sent == []
+    assert conn.execute("SELECT status FROM telegram_dm_outbox WHERE id=?", (outbox,)).fetchone()[0] == "cancelled"
+    assert "24 ساعة" in client.messages[-1][1]
 
 
 def test_dm_confirmation_is_idempotent_and_never_resends(conn, config):
