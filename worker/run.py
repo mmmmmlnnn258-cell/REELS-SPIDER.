@@ -64,6 +64,11 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
     # Notification outages must never affect publication state or stop the worker.
     from .operation_log import retry_pending_notifications
     retry_pending_notifications(conn, config, logger=logger)
+    # Telegram account-link results are durable and retried until Telegram accepts them.
+    if config.telegram_bot_token:
+        from .telegram_link_tickets import notify_link_ticket_results
+        from .telegram_api import TelegramClient
+        notify_link_ticket_results(conn, config, TelegramClient(), logger=logger)
 
     # Recover anything a previous worker claimed and never finished, BEFORE the kill
     # switch can return early. This writes no posts — it only moves an abandoned row out

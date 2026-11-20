@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 import re
+from urllib.parse import urlencode
+from .telegram_link_tickets import create_link_ticket
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -15,6 +17,7 @@ def _menu() -> dict:
     return {"inline_keyboard": [
         [{"text": "🚀 نشر الآن", "callback_data": "bs:publish"}],
         [{"text": "📅 إدارة الجدولة", "callback_data": "bs:schedule"}],
+        [{"text": "👤 الحسابات المرتبطة", "callback_data": "bs:accounts"}],
         [{"text": "📊 حالة النظام", "callback_data": "bs:status"},
          {"text": "🗓 المنشورات القادمة", "callback_data": "bs:posts"}],
         [{"text": "💬 إدارة التعليقات", "callback_data": "bs:comments"},
@@ -533,6 +536,94 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 keyboard.append(navigation)
             keyboard.append([{"text": "↩ القائمة", "callback_data": "bs:menu"}])
             _send(client, token, chat_id, body, {"inline_keyboard": keyboard})
+            return True
+
+        if data == "bs:account:add":
+            base = str(getattr(config, "telegram_dashboard_url", "") or "").strip().rstrip("/")
+            if not base.startswith("https://"):
+                _send(client, token, chat_id, "تعذر بدء ربط Instagram. تحقق من إعداد رابط HTTPS للوحة التحكم.", _menu())
+                return True
+            ticket = create_link_ticket(conn, chat_id=chat_id, user_id=sender_id, platform="instagram")
+            url = base + "/api/channels/instagram/telegram?" + urlencode({"ticket": ticket.token})
+            _send(client, token, chat_id, "افتح الرابط لإضافة حساب Instagram خلال 10 دقائق. سجّل الدخول في صفحة Instagram الرسمية؛ لا ترسل كلمة المرور أو رمز التحقق للبوت.", {"inline_keyboard": [[{"text": "➕ تسجيل دخول Instagram", "url": url}]]})
+            return True
+        if data.startswith("bs:account:select:"):
+            raw_id = data.removeprefix("bs:account:select:")
+            if not raw_id.isdigit():
+                _send(client, token, chat_id, "رقم الحساب غير صالح.", _menu())
+                return True
+            account = conn.execute(
+                """SELECT id, instagram_user_id, username, status
+                     FROM instagram_accounts
+                    WHERE id=? AND telegram_chat_id=? AND telegram_user_id=?""",
+                (int(raw_id), chat_id, sender_id),
+            ).fetchone()
+            if account is None or account["status"] != "connected":
+                _send(client, token, chat_id, "الحساب غير موجود أو غير متصل. حدّث قائمة الحسابات.", _menu())
+                return True
+            conn.execute(
+                """INSERT INTO telegram_account_preferences
+                   (telegram_chat_id, telegram_user_id, selected_instagram_account_id, updated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(telegram_chat_id, telegram_user_id) DO UPDATE SET
+                     selected_instagram_account_id=excluded.selected_instagram_account_id,
+                     updated_at=excluded.updated_at""",
+                (chat_id, sender_id, int(account["id"]), datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+            _send(client, token, chat_id,
+                  f"✅ تم اختيار حساب Instagram @{account['username']} للإدارة.\n"
+                  f"معرّف الحساب: {account['instagram_user_id']}",
+                  {"inline_keyboard": [
+                      [{"text": "👤 الحسابات المرتبطة", "callback_data": "bs:accounts"}],
+                      [{"text": "↩ القائمة", "callback_data": "bs:menu"}],
+                  ]})
+            return True
+        if data == "bs:accounts":
+            rows = conn.execute(
+                """SELECT id, instagram_user_id, username, status, token_expires_at,
+                          last_verified_at
+                     FROM instagram_accounts
+                    WHERE telegram_chat_id=? AND telegram_user_id=?
+                    ORDER BY created_at DESC, id DESC""",
+                (chat_id, sender_id),
+            ).fetchall()
+            selected = conn.execute(
+                """SELECT selected_instagram_account_id FROM telegram_account_preferences
+                    WHERE telegram_chat_id=? AND telegram_user_id=?""",
+                (chat_id, sender_id),
+            ).fetchone()
+            selected_id = int(selected["selected_instagram_account_id"]) if selected and selected["selected_instagram_account_id"] else None
+            lines = ["👤 حسابات Instagram المرتبطة"]
+            keyboard = []
+            if not rows:
+                lines.append("\nلا توجد حسابات مرتبطة حتى الآن.")
+            else:
+                for row in rows:
+                    state = {
+                        "connected": "✅ متصل",
+                        "expired": "⌛ انتهت صلاحية الاتصال",
+                        "revoked": "⛔ تم إلغاء الصلاحية",
+                        "error": "⚠️ يحتاج إلى إعادة ربط",
+                    }.get(row["status"], "⚠️ حالة غير معروفة")
+                    selected_label = " ⭐ الحساب المختار" if int(row["id"]) == selected_id else ""
+                    lines.append(
+                        f"\n@{row['username']}{selected_label}\n"
+                        f"المعرّف: {row['instagram_user_id']}\n"
+                        f"الحالة: {state}"
+                    )
+                    if row["status"] == "connected":
+                        keyboard.append([{
+                            "text": ("✓ " if int(row["id"]) == selected_id else "اختيار ")
+                                    + "@" + str(row["username"])[:24],
+                            "callback_data": f"bs:account:select:{row['id']}",
+                        }])
+            keyboard.extend([
+                [{"text": "➕ إضافة حساب Instagram", "callback_data": "bs:account:add"}],
+                [{"text": "🔄 تحديث", "callback_data": "bs:accounts"}],
+                [{"text": "↩ القائمة", "callback_data": "bs:menu"}],
+            ])
+            _send(client, token, chat_id, "\n".join(lines)[:3300], {"inline_keyboard": keyboard})
             return True
 
         if data == "bs:status":
