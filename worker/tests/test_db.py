@@ -58,6 +58,7 @@ def test_due_publications_break_ties_by_id(conn):
 
 def test_database_connections_wait_for_transient_writer_contention(db_path):
     """A competing writer waits for a short transaction instead of failing SQLITE_BUSY."""
+    connection = db.connect(db_path)
     holder = sqlite3.connect(str(db_path), timeout=1, check_same_thread=False)
     holder.execute("BEGIN IMMEDIATE")
     release = threading.Event()
@@ -70,7 +71,6 @@ def test_database_connections_wait_for_transient_writer_contention(db_path):
 
     thread = threading.Thread(target=release_writer, daemon=True)
     thread.start()
-    connection = db.connect(db_path)
     try:
         connection.execute("BEGIN IMMEDIATE")
         assert release.wait(timeout=2)
