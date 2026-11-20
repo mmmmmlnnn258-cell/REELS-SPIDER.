@@ -62,12 +62,12 @@ def test_expired_ticket_cannot_be_claimed(conn):
     assert claim_link_ticket(conn, ticket.token, now=now + timedelta(minutes=10)) is None
 
 
-def test_ticket_rejects_channel_platform_mismatch(conn):
-    channel_id = _channel(conn, "facebook")
-    with pytest.raises(ValueError, match="does not match"):
+def test_ticket_rejects_facebook_linking(conn):
+    channel_id = _channel(conn, "instagram")
+    with pytest.raises(ValueError, match="Only Instagram"):
         create_link_ticket(
             conn, chat_id="chat-4", user_id="user-4",
-            channel_id=channel_id, platform="instagram",
+            channel_id=channel_id, platform="facebook",
         )
 
 
