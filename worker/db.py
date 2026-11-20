@@ -41,9 +41,19 @@ def _channel_row_factory(cursor, values):
     return _DecryptedTokenRow(names, decoded)
 
 
+# WAL permits concurrent readers, but SQLite still serializes writers. Give
+# short writes from the dashboard, publisher, and Telegram receiver time to finish
+# instead of failing after sqlite3's five-second default.
+SQLITE_BUSY_TIMEOUT_MS = 30_000
+
+
 def connect(database_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(database_path))
+    conn = sqlite3.connect(
+        str(database_path),
+        timeout=SQLITE_BUSY_TIMEOUT_MS / 1000,
+    )
     conn.row_factory = _channel_row_factory
+    conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS};")
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
