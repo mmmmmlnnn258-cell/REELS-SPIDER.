@@ -475,3 +475,44 @@ def test_operation_log_redacts_credentials_from_caption_text(conn, config):
     )
     assert "EAA" not in event["caption"]
     assert "<redacted>" in event["caption"]
+
+
+def test_operation_notification_releases_sqlite_before_telegram_send(
+    conn, config, make_publication, monkeypatch
+):
+    import sqlite3
+
+    pub = make_publication(post_type="single", n_assets=1)
+    conn.execute(
+        "UPDATE publications SET status='posted',remote_post_id='ig-lock',attempt_count=1 WHERE id=?",
+        (pub["id"],),
+    )
+    conn.commit()
+    db_path = conn.execute("PRAGMA database_list").fetchone()["file"]
+
+    class ConcurrentWriter:
+        def send_message(self, token, chat_id, message):
+            assert not conn.in_transaction
+            with sqlite3.connect(db_path, timeout=0.5) as other:
+                other.execute(
+                    """UPDATE telegram_operation_notifications
+                          SET attempt_count=attempt_count+1
+                        WHERE chat_id=?""",
+                    (chat_id,),
+                )
+
+    monkeypatch.setattr(operation_log, "_telegram_client", lambda: ConcurrentWriter())
+    cfg = replace(config, telegram_bot_token="test-token",
+                  telegram_allowed_chat_ids="7441755677")
+    event = operation_log.record_publication_outcome(
+        conn, pub["id"], SimpleNamespace(result="posted", detail="ok"),
+        cfg, dry_run=False,
+    )
+    assert event["status"] == "success"
+    assert conn.execute(
+        "SELECT notified_at FROM telegram_operation_log WHERE id=?", (event["id"],)
+    ).fetchone()[0] is not None
+    assert conn.execute(
+        "SELECT attempt_count FROM telegram_operation_notifications WHERE operation_id=?",
+        (event["id"],),
+    ).fetchone()[0] == 2

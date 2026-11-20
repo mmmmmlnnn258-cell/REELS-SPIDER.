@@ -139,13 +139,17 @@ def notify_link_ticket_results(conn, config, client, *, logger=None, limit: int 
     if not token:
         return 0
     now = datetime.now(timezone.utc)
-    conn.execute(
-        """UPDATE telegram_account_link_tickets
-              SET status = 'failed',
-                  failure_reason = 'انتهت مهلة تسجيل الدخول قبل اكتمال ربط Instagram.'
-            WHERE status = 'pending' AND consumed_at IS NOT NULL AND expires_at <= ?""",
-        (_iso(now),),
-    )
+    # Complete the expiry write before reading or calling Telegram. The worker
+    # reuses this connection across cycles, so an implicit transaction here must
+    # never remain open while the network request is in flight.
+    with conn:
+        conn.execute(
+            """UPDATE telegram_account_link_tickets
+                  SET status = 'failed',
+                      failure_reason = 'انتهت مهلة تسجيل الدخول قبل اكتمال ربط Instagram.'
+                WHERE status = 'pending' AND consumed_at IS NOT NULL AND expires_at <= ?""",
+            (_iso(now),),
+        )
     rows = conn.execute(
         """SELECT id, telegram_chat_id, status, result_account_name,
                   result_account_id, failure_reason
@@ -170,9 +174,12 @@ def notify_link_ticket_results(conn, config, client, *, logger=None, limit: int 
             if logger:
                 logger.warning("Could not deliver Instagram link result for ticket %s; delivery will be retried.", row["id"])
             continue
-        changed = conn.execute(
-            "UPDATE telegram_account_link_tickets SET notified_at=? WHERE id=? AND notified_at IS NULL",
-            (_iso(datetime.now(timezone.utc)), row["id"]),
-        ).rowcount
+        # Persist the acknowledgement in its own short transaction, after
+        # Telegram confirms delivery. Never hold a SQLite write lock over I/O.
+        with conn:
+            changed = conn.execute(
+                "UPDATE telegram_account_link_tickets SET notified_at=? WHERE id=? AND notified_at IS NULL",
+                (_iso(datetime.now(timezone.utc)), row["id"]),
+            ).rowcount
         delivered += int(changed == 1)
     return delivered
