@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { instagramCredentials, instagramRedirectUri } from "@/lib/config";
-import { DASHBOARD_SESSION_COOKIE, verifyDashboardSession } from "@/lib/dashboard-auth";
 import { createInstagramOAuthState, instagramAuthorizeUrl } from "@/lib/instagram-oauth";
 
 export const runtime = "nodejs";
@@ -15,12 +14,6 @@ export async function GET(req: NextRequest) {
   const ticket = req.nextUrl.searchParams.get("ticket") || "";
   if (!/^[A-Za-z0-9_-]{32,128}$/.test(ticket)) {
     return NextResponse.json({ error: "رابط الربط غير صالح أو منتهي." }, { status: 400 });
-  }
-
-  if (!verifyDashboardSession(req.cookies.get(DASHBOARD_SESSION_COOKIE)?.value)) {
-    const login = new URL("/login", req.url);
-    login.searchParams.set("next", req.nextUrl.pathname + req.nextUrl.search);
-    return NextResponse.redirect(login);
   }
 
   const redirectUri = instagramRedirectUri();
@@ -46,6 +39,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "انتهت صلاحية رابط الربط أو تم استخدامه مسبقاً." }, { status: 410 });
   }
 
+  // The one-time, expiring Telegram ticket is the authorization for this flow;
+  // do not force a separate dashboard login before opening official Instagram Login.
   // Account linking is Instagram-only and independent from publishing channels.
   const mode = "instagram_login";
   const credentials = instagramCredentials();
