@@ -234,6 +234,7 @@ def test_instagram_dead_token_is_flagged(conn, ig_login_config):
     session = FakeSession({"refresh_access_token": dead, "me": dead})
     assert check_channel(conn, ig_login_config, ch, NOW, session=session) == "error"
     assert "no longer valid" in db.get_channel(conn, ch["id"])["token_error"]
+    assert "Connect Instagram" in db.get_channel(conn, ch["id"])["token_error"]
 
 
 def test_instagram_known_close_expiry_and_failed_renewal_is_flagged(conn, ig_login_config):
