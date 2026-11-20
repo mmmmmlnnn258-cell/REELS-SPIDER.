@@ -263,7 +263,7 @@ async function finishUnifiedLogin(
         instagram_error: "The selected Instagram channel no longer exists. No credentials were changed.",
       });
     }
-    recordTelegramTicketSuccess(telegramTicketHash, channelId, username, remoteAccountId);
+    recordTelegramTicketSuccess(telegramTicketHash, username, remoteAccountId);
     return back(redirectUri, {
       instagram_connected: String(channelId),
       instagram_username: username,
@@ -480,22 +480,6 @@ export async function GET(req: NextRequest) {
       return back(redirectUri, {
         instagram_error: "The selected Instagram channel no longer exists. No credentials were changed.",
       });
-    }
-
-    if (telegramTicketHash) {
-      const saved = saveTelegramInstagramAccount(
-        telegramTicketHash,
-        identity.username,
-        remoteAccountId,
-        longToken.access_token,
-        new Date(Date.now() + expiresIn * 1000).toISOString(),
-      );
-      if (!saved) {
-        return back(redirectUri, {
-          instagram_error: "انتهت صلاحية رابط إضافة الحساب. ابدأ الربط من البوت مرة أخرى.",
-        });
-      }
-      return back(redirectUri, { instagram_account_connected: "1", instagram_username: identity.username });
     }
 
     recordTelegramTicketSuccess(telegramTicketHash, identity.username, remoteAccountId);
