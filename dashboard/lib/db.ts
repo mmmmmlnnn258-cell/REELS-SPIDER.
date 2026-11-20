@@ -18,6 +18,7 @@ export function getDb(): Database.Database {
   if (_db) return _db;
   // The database directory may not exist on a fresh Railway deployment.
   // Create it only when the first request opens SQLite, never during prerender.
+  fs.mkdirSync(path.dirname(config.databasePath), { recursive: true });
   const db = new Database(config.databasePath);
   // The Python worker and dashboard share this SQLite file. WAL permits concurrent
   // readers, but writers still serialize; wait for short worker/dashboard writes
