@@ -35,7 +35,7 @@ type MetaPayload = MetaIdentity & MetaShortToken & {
   error?: unknown;
 };
 
-function back(
+function baseBack(
   redirectUri: string,
   params: Record<string, string>,
   clearOAuthCookies = true,
@@ -53,6 +53,24 @@ function back(
     response.cookies.delete("instagram_telegram_ticket");
   }
   return response;
+}
+
+function backWithTicket(
+  redirectUri: string,
+  params: Record<string, string>,
+  ticketHash: string | undefined,
+  clearOAuthCookies = true,
+) {
+  if (ticketHash && /^[a-f0-9]{64}$/.test(ticketHash) && params.instagram_error) {
+    try {
+      getDb().prepare(
+        "UPDATE telegram_account_link_tickets SET status='failed', failure_reason=? WHERE ticket_hash=? AND status='pending' AND consumed_at IS NOT NULL AND platform='instagram'",
+      ).run(params.instagram_error.slice(0, 300), ticketHash);
+    } catch {
+      // Keep the OAuth response safe even if the optional Telegram notification record fails.
+    }
+  }
+  return baseBack(redirectUri, params, clearOAuthCookies);
 }
 
 function recordTelegramTicketSuccess(ticketHash: string | undefined, channelId: number, username: string, accountId: string) {
@@ -91,6 +109,8 @@ async function finishUnifiedLogin(
   code: string,
   telegramTicketHash?: string,
 ) {
+  const back = (uri: string, params: Record<string, string>, clear = true) =>
+    backWithTicket(uri, params, telegramTicketHash, clear);
   const { metaAppId, metaAppSecret, graphVersion } = config;
   if (!metaAppId || !metaAppSecret) {
     return back(redirectUri, {
@@ -229,11 +249,13 @@ export async function GET(req: NextRequest) {
   const targetId = Number(req.cookies.get(CHANNEL_COOKIE)?.value);
   const oauthMode = req.cookies.get(MODE_COOKIE)?.value ?? "instagram_login";
   const telegramTicketHash = req.cookies.get("instagram_telegram_ticket")?.value;
+  const back = (uri: string, params: Record<string, string>, clear = true) =>
+    backWithTicket(uri, params, telegramTicketHash, clear);
 
   // Validate the browser-bound state before handling either success or denial.
   // A forged error callback must not clear cookies belonging to a real OAuth attempt.
   if (!state || !expectedState || state !== expectedState) {
-    return back(
+    return baseBack(
       redirectUri,
       {
         instagram_error: "The Instagram sign-in session expired or did not match this browser. Try again.",
