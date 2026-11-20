@@ -10,7 +10,7 @@ const PUBLIC_PATHS = new Set([
   "/api/auth/logout",
   // OAuth providers must be able to return to these state-checked callbacks.
   "/api/channels/instagram/callback",
-  // The handler validates the dashboard session itself before consuming a Telegram ticket.
+  // The handler validates and atomically consumes a short-lived Telegram bearer ticket.
   "/api/channels/instagram/telegram",
   "/api/channels/tiktok/callback",
 ]);
