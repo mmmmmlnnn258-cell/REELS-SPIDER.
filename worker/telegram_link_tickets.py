@@ -154,6 +154,16 @@ def notify_link_ticket_results(conn, config, client, *, logger=None, limit: int 
     token = str(getattr(config, "telegram_bot_token", "") or "")
     if not token:
         return 0
+    # If a user closes the Meta page without returning to the callback, the
+    # consumed ticket must still produce a visible failure instead of hanging forever.
+    now = datetime.now(timezone.utc)
+    conn.execute(
+        """UPDATE telegram_account_link_tickets
+              SET status = 'failed',
+                  failure_reason = 'انتهت مهلة تسجيل الدخول قبل اكتمال ربط Instagram.'
+            WHERE status = 'pending' AND consumed_at IS NOT NULL AND expires_at <= ?""",
+        (_iso(now),),
+    )
     rows = conn.execute(
         """SELECT id, telegram_chat_id, status, result_account_name,
                   result_account_id, failure_reason
