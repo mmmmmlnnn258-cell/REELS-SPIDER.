@@ -283,12 +283,15 @@ export default async function ChannelsPage({
                           </p>
                         ) : null}
                       </div>
-                      <a
-                        href={`/api/channels/instagram/authorize?channel_id=${c.id}`}
-                        className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink hover:bg-surface"
-                      >
-                        {c.has_access_token && c.remote_account_id ? "Reconnect Instagram" : "ربط Instagram"}
-                      </a>
+                      <form action="/api/channels/instagram/authorize" method="post">
+                        <input type="hidden" name="channel_id" value={c.id} />
+                        <button
+                          type="submit"
+                          className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink hover:bg-surface"
+                        >
+                          {c.has_access_token && c.remote_account_id ? "Reconnect Instagram" : "ربط Instagram"}
+                        </button>
+                      </form>
                     </div>
                   </div>
                 ) : null}
