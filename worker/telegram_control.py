@@ -817,16 +817,16 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                           )""",
                     (now, now, publication_id),
                 )
-                if updated.rowcount != 1:
-                    _send(client, token, chat_id,
-                          "لم يتم تقديم المنشور: لم يعد مجدولاً أو أن قناة Instagram غير متصلة.", _menu())
-                    return True
-                if update_id is not None:
+                if updated.rowcount == 1 and update_id is not None:
                     conn.execute(
                         """INSERT OR IGNORE INTO telegram_ingest_updates
                            (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
                         (int(update_id), chat_id),
                     )
+            if updated.rowcount != 1:
+                _send(client, token, chat_id,
+                      "لم يتم تقديم المنشور: لم يعد مجدولاً أو أن قناة Instagram غير متصلة.", _menu())
+                return True
             from .operation_log import record_control_operation
             record_control_operation(
                 conn, int(update_id), "تقديم موعد للنشر",

@@ -32,6 +32,8 @@ def _schema_template(tmp_path_factory) -> Path:
     """
     path = tmp_path_factory.mktemp("schema") / "template.db"
     conn = sqlite3.connect(str(path))
+    # Match production: migrate.py enables persistent WAL before worker/dashboard start.
+    conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA foreign_keys = ON;")
     for sql_file in sorted(MIGRATIONS_DIR.glob("*.sql"), key=lambda f: f.name):
         conn.executescript(sql_file.read_text())

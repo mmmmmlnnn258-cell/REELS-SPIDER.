@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import sqlite3
+import threading
+import time
 
 from worker import db
 
@@ -51,3 +54,36 @@ def test_due_publications_break_ties_by_id(conn):
 
     got = [r["id"] for r in db.fetch_due_publications(conn, NOW.isoformat())]
     assert got == ids, "story slides must publish in insertion (slide) order"
+
+
+def test_database_connections_wait_for_transient_writer_contention(db_path):
+    """Opening a connection and starting a write both tolerate a concurrent writer."""
+    # Production enables WAL once in migrate.py before starting either process.
+    setup = sqlite3.connect(str(db_path))
+    setup.execute("PRAGMA journal_mode = WAL")
+    setup.close()
+
+    holder = sqlite3.connect(str(db_path), timeout=1, check_same_thread=False)
+    holder.execute("BEGIN IMMEDIATE")
+    release = threading.Event()
+
+    def release_writer():
+        time.sleep(0.2)
+        holder.rollback()
+        holder.close()
+        release.set()
+
+    thread = threading.Thread(target=release_writer, daemon=True)
+    thread.start()
+    connection = None
+    try:
+        # This used to fail here because connect() re-issued PRAGMA journal_mode=WAL
+        # while another connection held the writer lock.
+        connection = db.connect(db_path)
+        connection.execute("BEGIN IMMEDIATE")
+        assert release.wait(timeout=2)
+        connection.rollback()
+    finally:
+        if connection is not None:
+            connection.close()
+        thread.join(timeout=2)
