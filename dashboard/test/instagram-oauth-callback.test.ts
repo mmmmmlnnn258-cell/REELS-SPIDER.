@@ -75,7 +75,7 @@ test("callback exchanges tokens server-side and stores Instagram Login on the se
         expires_in: 5184000,
       });
     }
-    if (url.startsWith("https://graph.instagram.com/v27.0/me?")) {
+    if (/^https:\/\/graph\.instagram\.com\/v\d+\.\d+\/me\?/.test(url)) {
       assert.match(url, /fields=user_id%2Cusername/);
       return jsonResponse({ data: [{ user_id: "ig-user-900", username: "test_creator" }] });
     }
