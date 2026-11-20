@@ -170,9 +170,21 @@ Two things that will *not* tell you a token is broken, so don't rely on them: `p
 passes on a read-only token (reads work, publishing doesn't), and the dashboard shows the
 channel as connected either way.
 
-Instagram is the exception — Meta's `debug_token` refuses Instagram-Login tokens
-(`(#2) Service temporarily unavailable`), so `--check` proves reachability instead and
-cannot report the expiry. **Track the 60-day window yourself.**
+Instagram Login is the exception — Meta's `debug_token` refuses Instagram-Login tokens
+(`(#2) Service temporarily unavailable`), so `--check` is read-only: it proves the token can
+reach `/me` and reports the username, but it cannot report the expiry or renew the token.
+
+For channels connected with the dashboard's **Connect Instagram** OAuth button
+(`instagram_auth_method=instagram_login`), the worker handles renewal automatically. It
+checks each active channel every 12 hours and attempts a refresh when the stored expiry is
+unknown or within 14 days. A token less than 24 hours old cannot yet be refreshed; the
+worker verifies that it still works and tries again on a later cycle. A successful refresh
+stores the replacement token and its new expiry. If Meta says the token is expired/revoked
+or renewal cannot be recovered, reconnect that channel from **Channels → Connect Instagram**.
+
+The interactive `worker.exchange_token` helper is a separate manual/legacy token workflow;
+its reminder to refresh a pasted token before 60 days does not describe OAuth-managed
+channels. Do not use `--check` as a renewal command — it never changes stored credentials.
 
 ---
 
