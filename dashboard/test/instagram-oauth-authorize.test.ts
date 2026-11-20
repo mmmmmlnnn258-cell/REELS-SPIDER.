@@ -53,6 +53,7 @@ test("authorize starts OAuth for the selected existing Instagram channel only", 
   assert.equal(location.searchParams.get("enable_fb_login"), "0");
   assert.match(location.searchParams.get("state") ?? "", /^[0-9a-f]{64}$/);
   assert.ok(location.searchParams.get("scope")?.includes("instagram_business_basic"));
+  assert.ok(location.searchParams.get("scope")?.includes("instagram_business_manage_insights"));
   assert.equal(response.headers.get("cache-control"), "no-store");
 
   const cookies = response.cookies.getAll();
