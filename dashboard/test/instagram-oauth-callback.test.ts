@@ -295,3 +295,49 @@ test("callback refuses an ambiguous Meta identity response without storing crede
     globalThis.fetch = originalFetch;
   }
 });
+
+
+test("callback also accepts Meta's flat OAuth token and /me identity responses", async () => {
+  const { q, GET, suffix } = await setup();
+  const channelId = q.createChannel({
+    platform: "instagram",
+    account_name: `Flat response target ${suffix}`,
+    timezone: "Asia/Aden",
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith("https://api.instagram.com/oauth/access_token")) {
+      return jsonResponse({
+        access_token: "flat-short-lived-secret",
+        user_id: "app-scoped-id",
+        permissions: "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages",
+      });
+    }
+    if (url.startsWith("https://graph.instagram.com/access_token?")) {
+      return jsonResponse({
+        access_token: "flat-long-lived-secret",
+        token_type: "bearer",
+        expires_in: 5184000,
+      });
+    }
+    if (/^https:\\/\\/graph\\.instagram\\.com\\/v\\d+\\.\\d+\\/me\\?/.test(url)) {
+      return jsonResponse({ user_id: "flat-ig-user-901", username: "flat_creator" });
+    }
+    throw new Error(`Unexpected mocked Meta URL: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const response = await GET(callbackRequest(channelId));
+    const location = response.headers.get("location") ?? "";
+    const channel = q.getChannel(channelId)!;
+
+    assert.match(location, /instagram_connected=/);
+    assert.match(location, /instagram_username=flat_creator/);
+    assert.equal(channel.remote_account_id, "flat-ig-user-901");
+    assert.equal(decryptInstagramAccessToken(channel.access_token), "flat-long-lived-secret");
+    assert.equal(channel.instagram_auth_method, "instagram_login");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
