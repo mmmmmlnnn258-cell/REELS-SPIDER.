@@ -7,7 +7,7 @@ import {
   instagramUnifiedAuthorizeUrl,
   instagramCallbackUri,
 } from "./instagram-oauth";
-import { instagramCredentials, instagramRedirectUri } from "./config";
+import { instagramCredentials, instagramRedirectUri, instagramUnifiedConfigId } from "./config";
 
 test("Instagram OAuth state is cryptographically random and unique", () => {
   const first = createInstagramOAuthState();
@@ -107,4 +107,12 @@ test("Unified Login URL uses config_id and does not send classic scope parameter
   assert.equal(url.searchParams.get("state"), "random-state");
   assert.equal(url.searchParams.has("scope"), false);
   assert.equal(url.searchParams.has("enable_fb_login"), false);
+});
+
+test("Unified Login config id is read from server environment", () => {
+  process.env.INSTAGRAM_UNIFIED_CONFIG_ID = "config-123";
+  assert.equal(instagramUnifiedConfigId(), "config-123");
+  process.env.INSTAGRAM_UNIFIED_CONFIG_ID = "  ";
+  assert.equal(instagramUnifiedConfigId(), "");
+  delete process.env.INSTAGRAM_UNIFIED_CONFIG_ID;
 });
