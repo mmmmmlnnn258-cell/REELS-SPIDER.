@@ -240,6 +240,7 @@ export default async function ChannelsPage({
                   platform={c.platform}
                   remoteAccountId={c.remote_account_id}
                   instagramAuthMethod={c.instagram_auth_method}
+                  hasAccessToken={c.has_access_token}
                 />
 
                 {/* A grouped channel doesn't own its timezone — the group does, and
