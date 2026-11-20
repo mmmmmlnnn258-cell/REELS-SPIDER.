@@ -37,6 +37,8 @@ def test_main_menu_exposes_separate_operation_log(conn, config):
     buttons = [b for row in client.messages[0][2]["inline_keyboard"] for b in row]
     assert any(b["text"] == "📋 سجل العمليات" and b["callback_data"] == "bs:operations"
                for b in buttons)
+    assert any(b["text"] == "👤 الحسابات المرتبطة" and b["callback_data"] == "bs:accounts"
+               for b in buttons)
 
 
 def test_operation_log_shows_recent_success_and_failure(conn, config):
