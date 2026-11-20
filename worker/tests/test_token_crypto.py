@@ -47,7 +47,9 @@ def test_worker_database_decrypts_reads_and_encrypts_renewals(tmp_path, monkeypa
     row = conn.execute("SELECT * FROM channels WHERE id = 1").fetchone()
     assert row["access_token"] == "first-token"
     db.update_channel(conn, 1, access_token="rotated-token")
-    stored = conn.execute("SELECT access_token FROM channels WHERE id = 1").fetchone()[0]
+    raw = sqlite3.connect(tmp_path / "tokens.sqlite")
+    stored = raw.execute("SELECT access_token FROM channels WHERE id = 1").fetchone()[0]
     assert stored.startswith("enc:v1:")
     assert decrypt_token(stored, KEY) == "rotated-token"
+    raw.close()
     conn.close()
