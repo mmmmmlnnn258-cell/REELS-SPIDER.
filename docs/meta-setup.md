@@ -26,77 +26,55 @@ real post — staying in **Development mode**, no App Review, no paid tools.
    `META_APP_ID` and `META_APP_SECRET`. These are for the Facebook Login / Page
    integration; they are NOT the Instagram Business Login client credentials.
 
-## Step 2 — Use the Instagram-Login path (simplest — no Facebook Page)
+## Step 2 — Configure Instagram Business Login (no manual token entry)
 1. App Dashboard → **Products** → **Instagram** → **Set up**.
-2. Open **"API setup with Instagram login"** (NOT the Facebook-login one).
+2. Open **API setup with Instagram login** (not the Facebook Login setup).
 3. In **Business login settings**, copy the Instagram-specific **Instagram App ID**
    and **Instagram App Secret** into the server environment:
    ```
    INSTAGRAM_APP_ID=...
    INSTAGRAM_APP_SECRET=...
    INSTAGRAM_REDIRECT_URI=https://your-domain.example/api/channels/instagram/callback
+   TOKEN_ENCRYPTION_KEY=...
    ```
-   Register that exact callback URL in the same Instagram Business Login settings.
-   Do not substitute `META_APP_ID` or `META_APP_SECRET` — they are a separate credential pair.
-4. In SocialScheduler → Channels, press **ربط Instagram** on the existing Instagram
-   channel you want to connect. Approve the requested Instagram permissions. The callback
-   verifies the returned account and updates that selected channel; it does not create a
-   duplicate channel.
-5. The dashboard keeps the long-lived token server-side. Never paste an access token into
-   chat, a GitHub issue, or a public file.
-   - **Or skip it entirely.** In the dashboard, **Channels → Add channel** → pick
-     Instagram, paste the token into **Access token**, then click **"Don't know it? Look
-     it up from your access token"** under the id field. The dashboard asks Meta who the
-     token belongs to and fills the id in for you. It shows the username too, which is the
-     part worth checking — that one line confirms both the token and the id at once.
-   - You don't need to add yourself as an "Instagram Tester" for your *own* account — the
-     Add-account/Generate-token step is the authorization. ⚠ (Strongly implied by Meta's
-     flow; not stated verbatim on one page.)
+   Register that exact HTTPS callback URL in the same Instagram Business Login settings.
+   Do not substitute `META_APP_ID` or `META_APP_SECRET`: they are a separate credential pair.
+4. Generate `TOKEN_ENCRYPTION_KEY` as canonical Base64 for exactly 32 random bytes:
+   ```sh
+   python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
+   ```
+   Keep it secret, back it up securely, and use the identical value for dashboard and worker.
+   Losing or changing it without re-encrypting stored tokens makes connected Instagram
+   credentials unreadable.
+5. Keep the app in **Development mode** while testing your own account. Add the Instagram
+   account as a tester/role if Meta's dashboard requires it for your app's current setup.
+   The account must be **Business or Creator**; ordinary personal accounts are not supported.
 
-The app selects `graph.instagram.com` automatically for channels connected with
-Instagram Login. Leave `META_GRAPH_BASE` unchanged; it remains the legacy fallback.
+## Step 3 — Connect the existing channel with OAuth
+1. In SocialScheduler → **Channels**, create an Instagram channel if you do not already
+   have one. Creating the channel does not require an account ID or access token.
+2. On the exact Instagram channel card you want to connect, press **ربط Instagram**.
+3. Sign in directly with Instagram and approve the requested permissions:
+   `instagram_business_basic`, `instagram_business_content_publish`,
+   `instagram_business_manage_comments`, and `instagram_business_manage_messages`.
+4. Meta returns to the registered callback. The server exchanges the code, obtains a
+   long-lived token, verifies the account identity, encrypts the token, and updates only
+   the selected channel. It refuses to link the same Instagram account to a second channel.
+5. Confirm the success message shows the expected Instagram username and channel number.
+   The access token remains server-side; do not paste it into chat, GitHub, or the dashboard.
+6. The worker automatically selects `graph.instagram.com` for this Instagram Login
+   channel. Leave `META_GRAPH_BASE` unchanged; it remains the fallback for legacy channels.
 
-## Step 3 — Turn the short-lived token into a 60-day token
-**The Step 2 token expires in about an hour.** Nothing warns you — the channel will look
-connected and work all afternoon, then stop. Run this from the repo root:
+If OAuth fails, read the reason shown on the Channels page. Common causes are a callback URL
+that does not exactly match Meta's registered URL, missing Instagram app credentials, a
+missing encryption key, an account that is not Business/Creator, or permissions that were
+not granted. A failed connection does not overwrite the channel's existing credentials.
 
-```
-.venv/bin/python -m worker.exchange_token
-```
-
-Choose **Instagram**, paste the Step 2 token when asked, and it does the rest: exchanges
-for the 60-day token, confirms which account it belongs to, and offers to save it straight
-onto a channel. Your pasted token stays hidden — it never appears on screen or in your
-shell history — and it uses the app id/secret already in `.env`, so no secret goes in a URL.
-
-If no Instagram channel exists yet, it prints your **IG user id** and tells you to add the
-channel first (Step 4), then re-run to store the token.
-
-> **This token still expires — in 60 days.** Re-run the same command before then, pasting
-> the current token (it must be at least 24 hours old to refresh). `--check`, below, tells
-> you where you stand.
-
-<details><summary>Doing it by hand instead</summary>
-
-```
-curl -s "https://graph.instagram.com/access_token\
-?grant_type=ig_exchange_token\
-&client_secret=YOUR_APP_SECRET\
-&access_token=SHORT_LIVED_TOKEN"
-```
-The returned `access_token` is valid 60 days; refresh with `ig_refresh_token`
-(see reference.md). Paste it into the dashboard yourself.
-</details>
-
-## Step 4 — Add the channel in the dashboard
-1. Start the dashboard: `cd dashboard && npm run dev` → open the printed URL.
-2. **Channels → Add channel**:
-   - Platform: **Instagram**
-   - Account name: e.g. `Liparoto`
-   - Timezone: e.g. `America/New_York`
-   - **IG user id**: from Step 2
-   - **Access token**: the 60-day token from Step 3
-3. Save.
+## Step 4 — Verify safely before publishing
+Keep `DRY_RUN=1` and `KILL_SWITCH=0`. Check the channel card and system status to confirm
+the account is connected. Run the worker preflight if available; it performs read-only
+checks and does not publish content. Do not change `DRY_RUN` to `0` until you explicitly
+intend to test a real post and have reviewed the content and destination.
 
 ## Step 5 — Preflight (verify the token WITHOUT posting)
 From the repo root, with the venv active:
