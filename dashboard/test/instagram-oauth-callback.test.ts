@@ -321,7 +321,7 @@ test("callback also accepts Meta's flat OAuth token and /me identity responses",
         expires_in: 5184000,
       });
     }
-    if (/^https:\\/\\/graph\\.instagram\\.com\\/v\\d+\\.\\d+\\/me\\?/.test(url)) {
+    if (/^https:\/\/graph\.instagram\.com\/v\d+\.\d+\/me\?/.test(url)) {
       return jsonResponse({ user_id: "flat-ig-user-901", username: "flat_creator" });
     }
     throw new Error(`Unexpected mocked Meta URL: ${url}`);
