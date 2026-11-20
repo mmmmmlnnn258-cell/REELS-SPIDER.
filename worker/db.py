@@ -1,8 +1,7 @@
 """Database access for the worker.
 
-Thin helpers over sqlite3. WAL is enabled once by migrate.py before the worker and
- dashboard start; foreign_keys is per-connection and must be set each time. Row factory
- returns dict-like rows.
+Thin helpers over sqlite3. WAL is enabled once by migrate.py before the worker and dashboard start;
+foreign_keys is per-connection and must be set each time. Row factory returns dict-like rows.
 """
 
 from __future__ import annotations
