@@ -100,6 +100,7 @@ export const config = {
     afternoon: get("TOD_AFTERNOON", "13:00"),
     evening: get("TOD_EVENING", "18:00"),
   },
+  tokenEncryptionKey: get("TOKEN_ENCRYPTION_KEY", ""),
 };
 
 // ---- Live safety-switch reads (DRY_RUN / KILL_SWITCH) -----------------------------
