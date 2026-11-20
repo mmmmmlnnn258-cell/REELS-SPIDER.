@@ -626,3 +626,34 @@ def test_selected_instagram_account_is_scoped_to_telegram_identity(conn, config)
     ).fetchone()
     assert selected["selected_instagram_account_id"] == account_id
     assert "@selected_brand" in client.messages[0][1]
+
+
+def test_publish_now_failure_notice_is_sent_after_database_transaction(conn, config):
+    channel = conn.execute(
+        """INSERT INTO channels(platform, account_name, is_active)
+           VALUES ('instagram', 'not-connected', 1)"""
+    ).lastrowid
+    post = conn.execute(
+        "INSERT INTO posts(caption, post_type, status) VALUES ('Draft', 'reel', 'scheduled')"
+    ).lastrowid
+    publication = conn.execute(
+        """INSERT INTO publications(post_id, channel_id, scheduled_at, status)
+           VALUES (?, ?, '2099-01-01T12:00:00Z', 'scheduled')""",
+        (post, channel),
+    ).lastrowid
+    conn.commit()
+
+    class TransactionCheckingTelegram(FakeTelegram):
+        def send_message(self, token, chat_id, text, reply_markup=None):
+            assert not conn.in_transaction, "Telegram network call must happen outside SQLite transaction"
+            return super().send_message(token, chat_id, text, reply_markup)
+
+    client = TransactionCheckingTelegram()
+    assert process_control_update(
+        conn, cfg(config), client,
+        callback(update_id=905, data=f"bs:publish:{publication}"),
+    )
+    assert "لم يتم تقديم المنشور" in client.messages[0][1]
+    assert conn.execute(
+        "SELECT status FROM publications WHERE id=?", (publication,)
+    ).fetchone()[0] == "scheduled"
