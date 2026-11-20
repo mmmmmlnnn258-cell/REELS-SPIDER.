@@ -43,7 +43,11 @@ _PLATFORMS = ("instagram", "threads", "facebook")
 
 def _reconnect_for(channel, config) -> str:
     """Give recovery instructions that match the channel credential flow."""
-    if channel["platform"] == "instagram" and _uses_instagram_login(channel, config):
+    keys = channel.keys() if hasattr(channel, "keys") else ()
+    unified = "instagram_unified_login" in keys and bool(channel["instagram_unified_login"])
+    if channel["platform"] == "instagram" and (
+        _uses_instagram_login(channel, config) or unified
+    ):
         return "Reconnect it: Channels → select this channel → Connect Instagram."
     return "Reconnect it: Channels → Credentials → Edit, update the platform token."
 
