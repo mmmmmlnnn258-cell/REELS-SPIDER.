@@ -88,3 +88,52 @@ test("Instagram OAuth refuses to attach an account already linked to another cha
   assert.equal(q.getChannel(targetId)?.access_token, "target-old-token");
   assert.equal(q.getChannel(targetId)?.instagram_auth_method, "legacy");
 });
+
+
+test("Instagram OAuth connects different accounts to different selected channels", async () => {
+  const { q, suffix } = await setup();
+  const firstChannelId = q.createChannel({
+    platform: "instagram",
+    account_name: `First account ${suffix}`,
+    timezone: "Asia/Aden",
+  });
+  const secondChannelId = q.createChannel({
+    platform: "instagram",
+    account_name: `Second account ${suffix}`,
+    timezone: "Europe/London",
+  });
+
+  const first = q.connectInstagramChannel({
+    channelId: firstChannelId,
+    remoteAccountId: `instagram-user-one-${suffix}`,
+    accessToken: `first-long-lived-token-${suffix}`,
+    tokenExpiresAt: "2027-01-01T00:00:00.000Z",
+    instagramAuthMethod: "instagram_login",
+  });
+  const second = q.connectInstagramChannel({
+    channelId: secondChannelId,
+    remoteAccountId: `instagram-user-two-${suffix}`,
+    accessToken: `second-long-lived-token-${suffix}`,
+    tokenExpiresAt: "2027-02-01T00:00:00.000Z",
+    instagramAuthMethod: "instagram_login",
+  });
+
+  assert.equal(first, "connected");
+  assert.equal(second, "connected");
+  const firstSaved = q.getChannel(firstChannelId)!;
+  const secondSaved = q.getChannel(secondChannelId)!;
+  assert.equal(firstSaved.remote_account_id, `instagram-user-one-${suffix}`);
+  assert.equal(secondSaved.remote_account_id, `instagram-user-two-${suffix}`);
+  assert.equal(
+    decryptInstagramAccessToken(firstSaved.access_token!),
+    `first-long-lived-token-${suffix}`,
+  );
+  assert.equal(
+    decryptInstagramAccessToken(secondSaved.access_token!),
+    `second-long-lived-token-${suffix}`,
+  );
+  assert.equal(firstSaved.instagram_auth_method, "instagram_login");
+  assert.equal(secondSaved.instagram_auth_method, "instagram_login");
+  assert.equal(firstSaved.timezone, "Asia/Aden");
+  assert.equal(secondSaved.timezone, "Europe/London");
+});
