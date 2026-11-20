@@ -29,6 +29,7 @@ type MetaPayload = MetaIdentity & MetaShortToken & {
   scopes?: string[];
   is_valid?: boolean;
   app_id?: string;
+  type?: string;
   paging?: { next?: string };
   error?: unknown;
 };
@@ -112,9 +113,14 @@ async function finishUnifiedLogin(
     const debugResponse = await fetch(debugUrl, { method: "GET", signal: timeout, cache: "no-store" });
     const debugPayload = await readJson(debugResponse);
     const debug = debugPayload?.data as (MetaPayload | undefined);
-    if (!debugResponse.ok || !debug?.is_valid || (debug.app_id && debug.app_id !== metaAppId)) {
+    if (
+      !debugResponse.ok ||
+      !debug?.is_valid ||
+      debug.type !== "SYSTEM_USER" ||
+      (debug.app_id && debug.app_id !== metaAppId)
+    ) {
       return back(redirectUri, {
-        instagram_error: "Meta returned a token that could not be verified for this app. No channel credentials were changed.",
+        instagram_error: "Meta did not return a valid System User token for this app. Check that the configuration uses System-user access token, then reconnect. No channel credentials were changed.",
       });
     }
 
