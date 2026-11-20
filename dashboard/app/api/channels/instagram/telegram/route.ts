@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { instagramCredentials, instagramRedirectUri } from "@/lib/config";
-import { createInstagramOAuthState, instagramAuthorizeUrl } from "@/lib/instagram-oauth";
+import { config, instagramCredentials, instagramRedirectUri, instagramUnifiedConfigId } from "@/lib/config";
+import { createInstagramOAuthState, instagramAuthorizeUrl, instagramUnifiedAuthorizeUrl } from "@/lib/instagram-oauth";
 
 export const runtime = "nodejs";
 const STATE_COOKIE = "instagram_oauth_state";
@@ -41,9 +41,13 @@ export async function GET(req: NextRequest) {
 
   // The one-time, expiring Telegram ticket is the authorization for this flow;
   // do not force a separate dashboard login before opening official Instagram Login.
+  // Match the same login mode configured for the dashboard channel OAuth flow.
   // Account linking is Instagram-only and independent from publishing channels.
-  const mode = "instagram_login";
-  const credentials = instagramCredentials();
+  const unifiedConfigId = instagramUnifiedConfigId();
+  const useUnifiedLogin = Boolean(unifiedConfigId);
+  const credentials = useUnifiedLogin
+    ? { clientId: config.metaAppId, clientSecret: config.metaAppSecret }
+    : instagramCredentials();
   if (!credentials.clientId || !credentials.clientSecret) {
     db.prepare("UPDATE telegram_account_link_tickets SET status='failed', failure_reason=? WHERE ticket_hash=?")
       .run("بيانات تطبيق Meta غير مهيأة.", digest);
@@ -51,7 +55,16 @@ export async function GET(req: NextRequest) {
   }
 
   const state = createInstagramOAuthState();
-  const authorizeUrl = instagramAuthorizeUrl({ clientId: credentials.clientId, redirectUri, state });
+  const mode = useUnifiedLogin ? "unified_login" : "instagram_login";
+  const authorizeUrl = useUnifiedLogin
+    ? instagramUnifiedAuthorizeUrl({
+        clientId: credentials.clientId,
+        configId: unifiedConfigId,
+        redirectUri,
+        state,
+        graphVersion: config.graphVersion,
+      })
+    : instagramAuthorizeUrl({ clientId: credentials.clientId, redirectUri, state });
   const response = NextResponse.redirect(authorizeUrl);
   response.headers.set("Cache-Control", "no-store");
   response.headers.set("Referrer-Policy", "no-referrer");
