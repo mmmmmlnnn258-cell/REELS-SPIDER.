@@ -15,7 +15,8 @@ CREATE TABLE telegram_account_link_tickets (
   consumed_at TEXT,
   result_account_name TEXT,
   result_account_id TEXT,
-  failure_reason TEXT
+  failure_reason TEXT,
+  notified_at TEXT
 );
 CREATE INDEX idx_telegram_account_link_tickets_chat
   ON telegram_account_link_tickets(telegram_chat_id, created_at DESC);
