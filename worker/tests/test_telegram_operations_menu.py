@@ -117,27 +117,39 @@ def test_publish_now_action_is_logged_as_queue_change_not_publish_success(
     ).fetchone()[0] == "scheduled"
 
 
-def test_accounts_callback_shows_connection_state_without_tokens(conn, config):
-    ig_id = conn.execute(
-        """INSERT INTO channels(platform, account_name, remote_account_id, access_token, is_active)
-           VALUES ('instagram', 'حساب إنستغرام', 'ig-123', 'secret-instagram-token', 1)"""
-    ).lastrowid
+def test_accounts_callback_shows_independent_instagram_accounts_without_tokens(conn, config):
+    conn.execute(
+        """INSERT INTO instagram_accounts
+           (telegram_chat_id, telegram_user_id, instagram_user_id, username,
+            access_token, auth_method, status, created_at, updated_at, last_verified_at)
+           VALUES ('7441755677', '7441755677', 'ig-123', 'brand_account',
+                   'secret-instagram-token', 'instagram_login', 'connected',
+                   '2026-11-20', '2026-11-20', '2026-11-20')"""
+    )
+    conn.execute(
+        """INSERT INTO instagram_accounts
+           (telegram_chat_id, telegram_user_id, instagram_user_id, username,
+            access_token, auth_method, status, created_at, updated_at, last_verified_at)
+           VALUES ('7441755677', '7441755677', 'ig-old', 'expired_account',
+                   'secret-expired-token', 'instagram_login', 'expired',
+                   '2026-11-19', '2026-11-20', '2026-11-19')"""
+    )
     conn.execute(
         """INSERT INTO channels(platform, account_name, is_active)
-           VALUES ('instagram', 'قناة غير مربوطة', 1)"""
+           VALUES ('instagram', 'قناة لا علاقة لها بالحسابات', 1)"""
     )
     conn.commit()
     client = FakeTelegram()
     assert process_control_update(conn, cfg(config), client, cb(21, "bs:accounts"))
     body = client.messages[-1][1]
-    assert "حساب إنستغرام" in body and "ig-123" in body
-    assert "صفحة فيسبوك" not in body and "page-456" not in body
-    assert "قناة غير مربوطة" in body and "الربط غير مكتمل" in body
-    assert "متصل ونشط" in body
+    assert "@brand_account" in body and "ig-123" in body
+    assert "@expired_account" in body and "انتهت صلاحية الاتصال" in body
+    assert "قناة لا علاقة لها بالحسابات" not in body
     assert "secret-instagram-token" not in body
+    assert "secret-expired-token" not in body
 
 
 def test_accounts_callback_empty_state_is_clear(conn, config):
     client = FakeTelegram()
     assert process_control_update(conn, cfg(config), client, cb(22, "bs:accounts"))
-    assert "لا توجد حسابات Instagram" in client.messages[-1][1]
+    assert "لا توجد حسابات مرتبطة" in client.messages[-1][1]
