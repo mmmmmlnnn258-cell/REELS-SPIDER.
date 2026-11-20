@@ -603,3 +603,26 @@ def test_add_account_callback_creates_channel_free_instagram_ticket(conn, config
     assert keyboard[0][0]["url"].startswith(
         "https://dashboard.example.test/api/channels/instagram/telegram?ticket="
     )
+
+
+def test_selected_instagram_account_is_scoped_to_telegram_identity(conn, config):
+    account_id = conn.execute(
+        """INSERT INTO instagram_accounts
+           (telegram_chat_id, telegram_user_id, instagram_user_id, username,
+            access_token, auth_method, status, created_at, updated_at, last_verified_at)
+           VALUES ('7441755677', '7441755677', 'ig-selected', 'selected_brand',
+                   'encrypted-token', 'instagram_login', 'connected',
+                   '2026-11-20', '2026-11-20', '2026-11-20')"""
+    ).lastrowid
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), client,
+        callback(data=f"bs:account:select:{account_id}"),
+    )
+    selected = conn.execute(
+        """SELECT selected_instagram_account_id FROM telegram_account_preferences
+            WHERE telegram_chat_id='7441755677' AND telegram_user_id='7441755677'"""
+    ).fetchone()
+    assert selected["selected_instagram_account_id"] == account_id
+    assert "@selected_brand" in client.messages[0][1]
