@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getChannel } from "@/lib/queries";
-import { instagramCredentials, instagramRedirectUri } from "@/lib/config";
+import { config, instagramCredentials, instagramRedirectUri, instagramUnifiedConfigId } from "@/lib/config";
 import {
   createInstagramOAuthState,
   instagramAuthorizeUrl,
+  instagramUnifiedAuthorizeUrl,
 } from "@/lib/instagram-oauth";
 
 export const runtime = "nodejs";
 
 const STATE_COOKIE = "instagram_oauth_state";
 const CHANNEL_COOKIE = "instagram_oauth_channel_id";
+const MODE_COOKIE = "instagram_oauth_mode";
 const COOKIE_TTL_SECONDS = 600;
 
 function channelPage(redirectUri: string, message: string) {
@@ -53,18 +55,31 @@ export async function POST(req: NextRequest) {
     return channelPage(redirectUri, "The selected Instagram channel was not found.");
   }
 
-  const { clientId, clientSecret } = instagramCredentials();
-  if (!clientId || !clientSecret) {
+  const configId = instagramUnifiedConfigId();
+  const mode = configId ? "unified_login" : "instagram_login";
+  const credentials = configId
+    ? { clientId: config.metaAppId, clientSecret: config.metaAppSecret }
+    : instagramCredentials();
+  if (!credentials.clientId || !credentials.clientSecret) {
     return channelPage(
       redirectUri,
-      "Meta Instagram Login credentials are missing. Configure INSTAGRAM_APP_ID and INSTAGRAM_APP_SECRET on the server first.",
+      configId
+        ? "Meta app credentials are missing. Configure META_APP_ID and META_APP_SECRET on the server first."
+        : "Classic Instagram Login credentials are missing. Configure INSTAGRAM_APP_ID and INSTAGRAM_APP_SECRET on the server first.",
     );
   }
 
   const state = createInstagramOAuthState();
-  const response = NextResponse.redirect(
-    instagramAuthorizeUrl({ clientId, redirectUri, state }),
-  );
+  const authorizeUrl = configId
+    ? instagramUnifiedAuthorizeUrl({
+        clientId: credentials.clientId,
+        configId,
+        redirectUri,
+        state,
+        graphVersion: config.graphVersion,
+      })
+    : instagramAuthorizeUrl({ clientId: credentials.clientId, redirectUri, state });
+  const response = NextResponse.redirect(authorizeUrl);
   response.headers.set("Cache-Control", "no-store");
 
   const cookieOptions = {
@@ -76,5 +91,6 @@ export async function POST(req: NextRequest) {
   };
   response.cookies.set(STATE_COOKIE, state, cookieOptions);
   response.cookies.set(CHANNEL_COOKIE, String(channelId), cookieOptions);
+  response.cookies.set(MODE_COOKIE, mode, cookieOptions);
   return response;
 }
