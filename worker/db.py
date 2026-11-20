@@ -225,16 +225,15 @@ def update_channel(conn: sqlite3.Connection, channel_id: int, **fields) -> None:
         return
     if "access_token" in fields and fields["access_token"]:
         current = conn.execute(
-            "SELECT platform, instagram_auth_method, instagram_unified_login FROM channels WHERE id = ?",
+            "SELECT * FROM channels WHERE id = ?",
             (channel_id,),
         ).fetchone()
+        current_keys = current.keys() if current is not None and hasattr(current, "keys") else ()
+        unified = "instagram_unified_login" in current_keys and bool(current["instagram_unified_login"])
         if (
             current
             and current["platform"] == "instagram"
-            and (
-                current["instagram_auth_method"] == "instagram_login"
-                or bool(current["instagram_unified_login"])
-            )
+            and (current["instagram_auth_method"] == "instagram_login" or unified)
         ):
             fields["access_token"] = encrypt_token(fields["access_token"])
     cols = ", ".join(f"{k} = ?" for k in fields)
