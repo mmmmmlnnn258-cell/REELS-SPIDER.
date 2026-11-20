@@ -53,8 +53,8 @@ def create_link_ticket(
     chat_id, user_id = str(chat_id).strip(), str(user_id).strip()
     if not chat_id or not user_id:
         raise ValueError("Telegram chat and user IDs are required.")
-    if platform not in {"instagram", "facebook"}:
-        raise ValueError("Unsupported account platform.")
+    if platform != "instagram":
+        raise ValueError("Only Instagram account linking is supported.")
     channel = conn.execute(
         "SELECT id, platform FROM channels WHERE id = ?", (int(channel_id),)
     ).fetchone()
