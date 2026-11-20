@@ -205,6 +205,14 @@ def test_explicit_instagram_login_refresh_ignores_global_graph_base(conn, config
     assert check_channel(conn, cfg, channel, NOW, session=session) == "renewed"
     assert session.calls[0][0] == "https://graph.instagram.com/refresh_access_token"
 
+    # A rotated token must remain encrypted at rest, not just the initial OAuth token.
+    raw = conn.execute(
+        "SELECT access_token FROM channels WHERE id = ?", (channel["id"],)
+    ).fetchone()["access_token"]
+    from worker.token_crypto import decrypt_token, is_encrypted
+    assert is_encrypted(raw)
+    assert decrypt_token(raw) == NEW
+
 
 def test_instagram_with_weeks_left_makes_no_call(conn, ig_login_config):
     ch = _channel(conn, platform="instagram", token="IGA_OLD",
