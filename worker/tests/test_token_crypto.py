@@ -19,6 +19,14 @@ def test_round_trip_and_legacy_plaintext():
     assert decrypt_token("legacy-plain-token", KEY) == "legacy-plain-token"
 
 
+def test_decrypts_shared_dashboard_aes_gcm_interoperability_fixture():
+    fixture = (
+        "enc:v1:AAECAwQFBgcICQoL:"
+        "DkWXWuiGsHT+Mrr5xIcMBO6zqlKZAysJSgJYj58f/W9q6/R01Gu8gusy"
+    )
+    assert decrypt_token(fixture, KEY) == "IGAA-cross-runtime-fixture"
+
+
 def test_missing_wrong_key_and_tampering_fail_closed(monkeypatch):
     encrypted = encrypt_token("IGAA-secret", KEY)
     monkeypatch.delenv("TOKEN_ENCRYPTION_KEY", raising=False)
