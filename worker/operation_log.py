@@ -96,6 +96,8 @@ def _notify_once(conn, row, config, logger=None):
             except (TypeError, ValueError):
                 pass
         attempted_at = datetime.now(timezone.utc).isoformat()
+        # Claim this recipient in a short committed transaction, then release
+        # SQLite before making the Telegram network request.
         with conn:
             conn.execute(
                 """INSERT INTO telegram_operation_notifications
@@ -109,6 +111,7 @@ def _notify_once(conn, row, config, logger=None):
             )
         try:
             client.send_message(config.telegram_bot_token, chat_id, message[:3900])
+            # Only acknowledge after successful delivery; keep this write short too.
             with conn:
                 conn.execute(
                     """UPDATE telegram_operation_notifications SET notified_at=?
