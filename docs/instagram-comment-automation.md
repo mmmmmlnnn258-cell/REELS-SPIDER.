@@ -19,11 +19,14 @@ Instagram's official Webhooks documentation says Reels are not supported for the
 
 ## Meta connection requirements
 
-The API host must match the login/token flow:
-- Instagram Login (no Facebook Page): set `META_GRAPH_BASE=https://graph.instagram.com`.
-- Facebook Login: use `META_GRAPH_BASE=https://graph.facebook.com`.
+The worker chooses the Graph API host from each channel's saved login method:
+- **Instagram Login:** `graph.instagram.com`.
+- **Facebook Login:** `graph.facebook.com`.
+- **Legacy channels:** retain the configured `META_GRAPH_BASE` until explicitly reconnected or classified.
 
-The Instagram Login product introduced the `instagram_business_basic`, `instagram_business_manage_comments`, and `instagram_business_manage_messages` permissions. The app must have the required permissions/access level for the account and operation. See [Meta's Instagram API changelog](https://developers.facebook.com/docs/instagram/platform/instagram-api/changelog/) and [Instagram Messaging changelog](https://developers.facebook.com/documentation/business-messaging/instagram-messaging/changelog/).
+Do not change `META_GRAPH_BASE` to switch newly connected accounts. That setting is only the fallback for legacy Instagram channels; each explicitly connected channel keeps its own host, so one private installation can use multiple accounts and both login methods without a global host switch.
+
+Instagram Login uses `instagram_business_basic`, `instagram_business_content_publish`, `instagram_business_manage_comments`, and `instagram_business_manage_messages` as needed by the enabled features. The app and account must have the permissions/access level Meta requires for the requested operation. See [Meta's Instagram API changelog](https://developers.facebook.com/docs/instagram/platform/instagram-api/changelog/) and [Instagram Messaging changelog](https://developers.facebook.com/documentation/business-messaging/instagram-messaging/changelog/).
 
 Meta limits private replies to one private reply per comment and enforces a seven-day window for comments on posts and Reels. Follow-up messaging is subject to the normal Instagram messaging policy. The worker also avoids retrying uncertain send outcomes.
 
@@ -31,5 +34,5 @@ Meta limits private replies to one private reply per comment and enforces a seve
 
 - The rule is disabled when first created.
 - The worker never sends private or public replies while `DRY_RUN=1`.
-- Keep `KILL_SWITCH=1` available as the emergency stop.
-- Do not enable a rule until the channel has a valid token, the correct `META_GRAPH_BASE`, and the required Meta permissions.
+- `KILL_SWITCH=1` stops the worker cycle, including comment automation; `DRY_RUN=1` also prevents comment replies and publishing.
+- Do not enable a rule until the channel is connected through OAuth (or its legacy credentials are verified), and Meta has granted the required permissions.
