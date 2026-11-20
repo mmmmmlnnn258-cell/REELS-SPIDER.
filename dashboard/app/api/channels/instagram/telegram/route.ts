@@ -1,13 +1,12 @@
 import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { config, instagramCredentials, instagramRedirectUri, instagramUnifiedConfigId } from "@/lib/config";
+import { instagramCredentials, instagramRedirectUri } from "@/lib/config";
 import { DASHBOARD_SESSION_COOKIE, verifyDashboardSession } from "@/lib/dashboard-auth";
-import { createInstagramOAuthState, instagramAuthorizeUrl, instagramUnifiedAuthorizeUrl } from "@/lib/instagram-oauth";
+import { createInstagramOAuthState, instagramAuthorizeUrl } from "@/lib/instagram-oauth";
 
 export const runtime = "nodejs";
 const STATE_COOKIE = "instagram_oauth_state";
-const CHANNEL_COOKIE = "instagram_oauth_channel_id";
 const MODE_COOKIE = "instagram_oauth_mode";
 const TICKET_COOKIE = "instagram_telegram_ticket";
 const TTL = 600;
@@ -34,26 +33,22 @@ export async function GET(req: NextRequest) {
   const now = new Date().toISOString();
   const claim = db.transaction(() => {
     const row = db.prepare(
-      "SELECT id, channel_id, platform FROM telegram_account_link_tickets WHERE ticket_hash=? AND status='pending' AND consumed_at IS NULL AND expires_at>?",
-    ).get(digest, now) as { id: number; channel_id: number; platform: string } | undefined;
+      "SELECT id, platform FROM telegram_account_link_tickets WHERE ticket_hash=? AND status='pending' AND consumed_at IS NULL AND expires_at>?",
+    ).get(digest, now) as { id: number; platform: string } | undefined;
     if (!row || row.platform !== "instagram") return null;
     const changed = db.prepare(
       "UPDATE telegram_account_link_tickets SET consumed_at=? WHERE id=? AND status='pending' AND consumed_at IS NULL AND expires_at>?",
     ).run(now, row.id, now).changes;
-    if (changed !== 1) return null;
-    const channel = db.prepare("SELECT id, platform FROM channels WHERE id=?").get(row.channel_id) as { id: number; platform: string } | undefined;
-    return channel?.platform === "instagram" ? row : null;
+    return changed === 1 ? row : null;
   });
   const claimed = claim.immediate();
   if (!claimed) {
     return NextResponse.json({ error: "انتهت صلاحية رابط الربط أو تم استخدامه مسبقاً." }, { status: 410 });
   }
 
-  const configId = instagramUnifiedConfigId();
-  const mode = configId ? "unified_login" : "instagram_login";
-  const credentials = configId
-    ? { clientId: config.metaAppId, clientSecret: config.metaAppSecret }
-    : instagramCredentials();
+  // Account linking is Instagram-only and independent from publishing channels.
+  const mode = "instagram_login";
+  const credentials = instagramCredentials();
   if (!credentials.clientId || !credentials.clientSecret) {
     db.prepare("UPDATE telegram_account_link_tickets SET status='failed', failure_reason=? WHERE ticket_hash=?")
       .run("بيانات تطبيق Meta غير مهيأة.", digest);
@@ -61,15 +56,12 @@ export async function GET(req: NextRequest) {
   }
 
   const state = createInstagramOAuthState();
-  const authorizeUrl = configId
-    ? instagramUnifiedAuthorizeUrl({ clientId: credentials.clientId, configId, redirectUri, state, graphVersion: config.graphVersion })
-    : instagramAuthorizeUrl({ clientId: credentials.clientId, redirectUri, state });
+  const authorizeUrl = instagramAuthorizeUrl({ clientId: credentials.clientId, redirectUri, state });
   const response = NextResponse.redirect(authorizeUrl);
   response.headers.set("Cache-Control", "no-store");
   response.headers.set("Referrer-Policy", "no-referrer");
   const options = { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax" as const, path: "/", maxAge: TTL };
   response.cookies.set(STATE_COOKIE, state, options);
-  response.cookies.set(CHANNEL_COOKIE, String(claimed.channel_id), options);
   response.cookies.set(MODE_COOKIE, mode, options);
   response.cookies.set(TICKET_COOKIE, digest, options);
   return response;
