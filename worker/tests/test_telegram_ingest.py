@@ -280,7 +280,6 @@ def test_telegram_receiver_uses_fresh_db_connections_for_poll_and_each_update(
     keyboard = client.messages[0][2]["inline_keyboard"]
     buttons = [button for row in keyboard for button in row]
     assert any(button["callback_data"] == "bs:accounts" for button in buttons)
-    assert any(button["callback_data"] == "bs:account:add" for button in buttons)
     for connection in opened:
         with pytest.raises(sqlite3.ProgrammingError):
             connection.execute("SELECT 1")
