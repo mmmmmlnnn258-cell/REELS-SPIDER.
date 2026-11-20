@@ -585,8 +585,13 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                         f"المعرّف: {row['remote_account_id'] or 'غير متوفر'}\n"
                         f"الحالة: {state}"
                     )
-                body = "\n".join(lines)[:3900]
+                body = "\n".join(lines)[:3300]
+            link_buttons = [
+                [{"text": "🔗 ربط / تحديث Instagram #{}".format(row["id"]), "callback_data": "bs:account:link:{}".format(row["id"])}]
+                for row in rows
+            ]
             _send(client, token, chat_id, body, {"inline_keyboard": [
+                *link_buttons,
                 [{"text": "🔄 تحديث", "callback_data": "bs:accounts"}],
                 [{"text": "↩ القائمة", "callback_data": "bs:menu"}],
             ]})
