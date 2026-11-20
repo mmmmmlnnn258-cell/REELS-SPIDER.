@@ -20,8 +20,7 @@ type MetaShortToken = {
   permissions?: string | string[];
 };
 
-type MetaPayload = {
-  access_token?: string;
+type MetaPayload = MetaIdentity & MetaShortToken & {
   token_type?: string;
   expires_in?: number;
   data?: Array<MetaIdentity & MetaShortToken>;
@@ -136,10 +135,18 @@ export async function GET(req: NextRequest) {
       cache: "no-store",
     });
     const shortPayload = await readJson(shortResponse);
-    // Meta documents the code-exchange response as { data: [{ access_token, ... }] }.
+    // Meta integrations have returned both the documented flat token object and a
+    // wrapped { data: [...] } shape. Accept either only when it identifies exactly one
+    // token; reject mixed/ambiguous payloads rather than guessing which credential won.
+    const shortTokenRows = Array.isArray(shortPayload?.data)
+      ? shortPayload.data
+      : shortPayload?.access_token
+        ? [shortPayload]
+        : [];
     const shortToken =
-      Array.isArray(shortPayload?.data) && shortPayload.data.length === 1
-        ? shortPayload.data[0]
+      shortTokenRows.length === 1 &&
+      !(Array.isArray(shortPayload?.data) && shortPayload.access_token)
+        ? shortTokenRows[0]
         : null;
     if (!shortResponse.ok || !shortToken?.access_token) {
       return back(redirectUri, {
@@ -185,11 +192,17 @@ export async function GET(req: NextRequest) {
       cache: "no-store",
     });
     const identityPayload = await readJson(identityResponse);
-    // Meta documents /me as { data: [{ user_id, username }] }. Require exactly
-    // one identity row; a flat or ambiguous response is not proof of account ownership.
+    // /me is a node lookup and may be returned as a flat object; some API
+    // integrations wrap it in data. Accept one unambiguous identity only.
+    const identityRows = Array.isArray(identityPayload?.data)
+      ? identityPayload.data
+      : identityPayload?.user_id
+        ? [identityPayload]
+        : [];
     const identity =
-      Array.isArray(identityPayload?.data) && identityPayload.data.length === 1
-        ? identityPayload.data[0]
+      identityRows.length === 1 &&
+      !(Array.isArray(identityPayload?.data) && identityPayload.user_id)
+        ? identityRows[0]
         : null;
     const remoteAccountId = identity?.user_id ? String(identity.user_id) : "";
     if (!identityResponse.ok || !remoteAccountId || !identity?.username) {
