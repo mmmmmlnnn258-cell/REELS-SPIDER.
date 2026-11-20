@@ -14,7 +14,7 @@ export default function ImportPage() {
         </p>
       </header>
       <BulkImport
-        channels={getChannels()}
+        channels={getChannels().map(({ access_token, refresh_token, ...channel }) => channel)}
         periods={listPeriods()}
         timeOfDayTags={listTags("time_of_day")}
         topicTags={listTags("topic")}
