@@ -108,3 +108,53 @@ def test_abandoned_meta_login_expires_and_notifies_chat(conn):
     assert delivered == 1
     assert client.messages[0][1] == "chat-expired"
     assert "انتهت مهلة" in client.messages[0][2]
+
+
+
+def test_link_result_send_holds_no_sqlite_transaction_and_allows_second_writer(conn):
+    import sqlite3
+
+    ticket = create_link_ticket(conn, chat_id="chat-lock", user_id="user-lock")
+    assert claim_link_ticket(conn, ticket.token) is not None
+    assert finish_link_ticket(
+        conn, token=ticket.token, success=True, account_name="locktest", account_id="ig-lock",
+    )
+    conn.commit()
+    db_path = conn.execute("PRAGMA database_list").fetchone()["file"]
+
+    class ConcurrentWriter:
+        def send_message(self, token, chat_id, message):
+            assert not conn.in_transaction
+            with sqlite3.connect(db_path, timeout=0.5) as other:
+                other.execute(
+                    "UPDATE telegram_account_link_tickets SET failure_reason='concurrent writer' WHERE telegram_chat_id=?",
+                    (chat_id,),
+                )
+
+    assert notify_link_ticket_results(
+        conn, SimpleNamespace(telegram_bot_token="bot-token"), ConcurrentWriter(),
+    ) == 1
+    row = conn.execute(
+        "SELECT notified_at,failure_reason FROM telegram_account_link_tickets WHERE telegram_chat_id='chat-lock'"
+    ).fetchone()
+    assert row["notified_at"] is not None
+    assert row["failure_reason"] == "concurrent writer"
+
+
+def test_failed_link_result_send_does_not_mark_ticket_notified(conn):
+    ticket = create_link_ticket(conn, chat_id="chat-retry", user_id="user-retry")
+    assert claim_link_ticket(conn, ticket.token) is not None
+    assert finish_link_ticket(conn, token=ticket.token, success=False, failure_reason="temporary")
+    conn.commit()
+
+    class FailedSend:
+        def send_message(self, *args, **kwargs):
+            assert not conn.in_transaction
+            raise RuntimeError("Telegram unavailable")
+
+    assert notify_link_ticket_results(
+        conn, SimpleNamespace(telegram_bot_token="bot-token"), FailedSend(),
+    ) == 0
+    assert conn.execute(
+        "SELECT notified_at FROM telegram_account_link_tickets WHERE telegram_chat_id='chat-retry'"
+    ).fetchone()["notified_at"] is None
