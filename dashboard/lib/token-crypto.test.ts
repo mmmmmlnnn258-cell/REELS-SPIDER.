@@ -15,6 +15,13 @@ test("encrypts and decrypts with the shared versioned envelope", () => {
   assert.equal(decryptInstagramAccessToken(encrypted), "IGAA-secret");
 });
 
+test("decrypts the shared Python AES-GCM interoperability fixture", () => {
+  process.env.TOKEN_ENCRYPTION_KEY = KEY;
+  const fixture =
+    "enc:v1:AAECAwQFBgcICQoL:DkWXWuiGsHT+Mrr5xIcMBO6zqlKZAysJSgJYj58f/W9q6/R01Gu8gusy";
+  assert.equal(decryptInstagramAccessToken(fixture), "IGAA-cross-runtime-fixture");
+});
+
 test("keeps legacy plaintext readable and rejects tampering or missing key", () => {
   process.env.TOKEN_ENCRYPTION_KEY = KEY;
   assert.equal(decryptInstagramAccessToken("legacy-token"), "legacy-token");
