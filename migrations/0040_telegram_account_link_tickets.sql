@@ -40,3 +40,12 @@ CREATE INDEX idx_telegram_account_link_tickets_chat
   ON telegram_account_link_tickets(telegram_chat_id, created_at DESC);
 CREATE INDEX idx_telegram_account_link_tickets_expiry
   ON telegram_account_link_tickets(status, expires_at);
+
+-- The bot remembers one selected account per Telegram identity.
+CREATE TABLE telegram_account_preferences (
+  telegram_chat_id TEXT NOT NULL,
+  telegram_user_id TEXT NOT NULL,
+  selected_instagram_account_id INTEGER REFERENCES instagram_accounts(id) ON DELETE SET NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (telegram_chat_id, telegram_user_id)
+);
