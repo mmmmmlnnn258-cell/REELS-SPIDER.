@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { makeTestDb } from "../test/helpers.ts";
+import { decryptInstagramAccessToken } from "./token-crypto";
 
 let setupPromise: Promise<{
   q: typeof import("./queries.ts");
@@ -9,6 +10,9 @@ let seq = 0;
 
 async function setup() {
   if (!setupPromise) {
+    process.env.TOKEN_ENCRYPTION_KEY = Buffer.from(
+      Array.from({ length: 32 }, (_, index) => index),
+    ).toString("base64");
     makeTestDb();
     setupPromise = import("./queries.ts");
   }
@@ -41,7 +45,8 @@ test("Instagram OAuth updates only credentials and auth method on the selected c
   assert.equal(result, "connected");
   const channel = q.getChannel(channelId)!;
   assert.equal(channel.remote_account_id, `new-account-${suffix}`);
-  assert.equal(channel.access_token, "new-long-lived-token");
+  assert.match(channel.access_token!, /^enc:v1:/);
+  assert.equal(decryptInstagramAccessToken(channel.access_token!), "new-long-lived-token");
   assert.equal(channel.token_expires_at, "2027-01-01T00:00:00.000Z");
   assert.equal(channel.instagram_auth_method, "instagram_login");
   assert.equal(channel.account_name, `OAuth target ${suffix}`);
