@@ -123,10 +123,6 @@ def test_accounts_callback_shows_connection_state_without_tokens(conn, config):
            VALUES ('instagram', 'حساب إنستغرام', 'ig-123', 'secret-instagram-token', 1)"""
     ).lastrowid
     conn.execute(
-        """INSERT INTO channels(platform, account_name, remote_account_id, access_token, is_active)
-           VALUES ('facebook', 'صفحة فيسبوك', 'page-456', 'secret-facebook-token', 1)"""
-    )
-    conn.execute(
         """INSERT INTO channels(platform, account_name, is_active)
            VALUES ('instagram', 'قناة غير مربوطة', 1)"""
     )
@@ -135,14 +131,13 @@ def test_accounts_callback_shows_connection_state_without_tokens(conn, config):
     assert process_control_update(conn, cfg(config), client, cb(21, "bs:accounts"))
     body = client.messages[-1][1]
     assert "حساب إنستغرام" in body and "ig-123" in body
-    assert "صفحة فيسبوك" in body and "page-456" in body
+    assert "صفحة فيسبوك" not in body and "page-456" not in body
     assert "قناة غير مربوطة" in body and "الربط غير مكتمل" in body
     assert "متصل ونشط" in body
     assert "secret-instagram-token" not in body
-    assert "secret-facebook-token" not in body
 
 
 def test_accounts_callback_empty_state_is_clear(conn, config):
     client = FakeTelegram()
     assert process_control_update(conn, cfg(config), client, cb(22, "bs:accounts"))
-    assert "لا توجد قنوات Instagram أو Facebook" in client.messages[-1][1]
+    assert "لا توجد حسابات Instagram" in client.messages[-1][1]
