@@ -33,13 +33,15 @@ test("authorize URL uses Instagram Business Login and current permission names",
     "instagram_business_content_publish",
     "instagram_business_manage_comments",
     "instagram_business_manage_messages",
+    "instagram_business_manage_insights",
   ]);
   assert.equal(url.searchParams.get("scope"), INSTAGRAM_SCOPES.join(","));
   assert.ok(INSTAGRAM_SCOPES.includes("instagram_business_basic"));
   assert.ok(INSTAGRAM_SCOPES.includes("instagram_business_content_publish"));
   assert.ok(INSTAGRAM_SCOPES.includes("instagram_business_manage_comments"));
   assert.ok(INSTAGRAM_SCOPES.includes("instagram_business_manage_messages"));
-  assert.equal(INSTAGRAM_SCOPES.length, 4);
+  assert.ok(INSTAGRAM_SCOPES.includes("instagram_business_manage_insights"));
+  assert.equal(INSTAGRAM_SCOPES.length, 5);
 });
 
 test("callback URI is built on the application origin", () => {
