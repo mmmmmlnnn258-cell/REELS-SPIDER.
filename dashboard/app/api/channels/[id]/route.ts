@@ -57,6 +57,12 @@ export async function PATCH(
       { status: 400 }
     );
   }
+  if ("instagram_unified_login" in body) {
+    return NextResponse.json(
+      { error: "Instagram Unified Login can only be changed by completing the official OAuth flow." },
+      { status: 400 }
+    );
+  }
   // The auth method selects the Graph API host and token lifecycle. It must only
   // change inside connectInstagramChannel(), which stores the verified account id,
   // token, expiry, and method atomically after OAuth. A generic PATCH must never
