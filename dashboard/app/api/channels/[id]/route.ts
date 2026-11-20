@@ -83,7 +83,7 @@ export async function PATCH(
     ("remote_account_id" in body || "access_token" in body)
   ) {
     return NextResponse.json(
-      { error: "OAuth-managed Instagram account ID and access token can only be changed by completing the matching Instagram connection flow." },
+      { error: "OAuth-managed Instagram account ID and access token can only be changed by completing the matching Instagram OAuth connection flow." },
       { status: 400 }
     );
   }
