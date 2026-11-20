@@ -50,7 +50,7 @@ test("authorize starts OAuth for the selected existing Instagram channel only", 
   assert.equal(location.origin + location.pathname, "https://www.instagram.com/oauth/authorize");
   assert.equal(location.searchParams.get("client_id"), "authorize-test-app");
   assert.equal(location.searchParams.get("response_type"), "code");
-  assert.equal(location.searchParams.get("enable_fb_login"), "0");
+  assert.equal(location.searchParams.get("enable_fb_login"), "false");
   assert.match(location.searchParams.get("state") ?? "", /^[0-9a-f]{64}$/);
   assert.ok(location.searchParams.get("scope")?.includes("instagram_business_basic"));
   assert.ok(location.searchParams.get("scope")?.includes("instagram_business_manage_insights"));
