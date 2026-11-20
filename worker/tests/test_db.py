@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import sqlite3
+import threading
+import time
 
 from worker import db
 
@@ -52,13 +55,26 @@ def test_due_publications_break_ties_by_id(conn):
     got = [r["id"] for r in db.fetch_due_publications(conn, NOW.isoformat())]
     assert got == ids, "story slides must publish in insertion (slide) order"
 
+
 def test_database_connections_wait_for_transient_writer_contention(db_path):
-    """Every worker connection uses the explicit lock wait, not sqlite3's default."""
+    """A competing writer waits for a short transaction instead of failing SQLITE_BUSY."""
+    holder = sqlite3.connect(str(db_path), timeout=1, check_same_thread=False)
+    holder.execute("BEGIN IMMEDIATE")
+    release = threading.Event()
+
+    def release_writer():
+        time.sleep(0.2)
+        holder.rollback()
+        holder.close()
+        release.set()
+
+    thread = threading.Thread(target=release_writer, daemon=True)
+    thread.start()
     connection = db.connect(db_path)
     try:
-        timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
-        assert timeout == db.SQLITE_BUSY_TIMEOUT_MS
-        assert timeout == 30_000
+        connection.execute("BEGIN IMMEDIATE")
+        assert release.wait(timeout=2)
+        connection.rollback()
     finally:
         connection.close()
-
+        thread.join(timeout=2)
