@@ -541,16 +541,16 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 """SELECT id, platform, account_name, remote_account_id, linked_page_id,
                           access_token, is_active
                      FROM channels
-                    WHERE platform IN ('instagram', 'facebook')
+                    WHERE platform = 'instagram'
                     ORDER BY platform, id"""
             ).fetchall()
             if not rows:
                 body = (
                     "👤 الحسابات المرتبطة\n"
-                    "لا توجد قنوات Instagram أو Facebook محفوظة حتى الآن."
+                    "لا توجد حسابات Instagram محفوظة حتى الآن."
                 )
             else:
-                labels = {"instagram": "Instagram", "facebook": "Facebook Page"}
+                labels = {"instagram": "Instagram"}
                 lines = ["👤 الحسابات المرتبطة"]
                 for row in rows:
                     platform = labels.get(row["platform"], row["platform"])
@@ -566,7 +566,6 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                         f"\n#{row['id']} · {platform}\n"
                         f"الاسم: {row['account_name'] or 'غير محدد'}\n"
                         f"المعرّف: {row['remote_account_id'] or 'غير متوفر'}\n"
-                        f"حالة الصفحة المرتبطة: {row['linked_page_id'] or '—'}\n"
                         f"الحالة: {state}"
                     )
                 body = "\n".join(lines)[:3900]
