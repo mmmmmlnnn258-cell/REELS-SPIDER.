@@ -25,7 +25,14 @@ function channelPage(redirectUri: string, message: string) {
  * The callback can therefore update only the channel the owner explicitly selected,
  * preserving its label, timezone, queue and history instead of creating a duplicate.
  */
-export function GET(req: NextRequest) {
+export async function POST(req: NextRequest) {
+  // Starting an account-linking flow changes browser-bound OAuth state. Require a
+  // same-origin POST (enforced by proxy.ts) rather than a cross-site GET link, so an
+  // external page cannot silently start linking an Instagram account to a channel.
+  const form = await req.formData().catch(() => null);
+  if (!form) {
+    return NextResponse.json({ error: "Invalid Instagram connection request." }, { status: 400 });
+  }
   // Use a fixed, operator-configured callback URL. Request Host and forwarded-host
   // headers must never influence the redirect_uri sent to Meta.
   const redirectUri = instagramRedirectUri();
@@ -36,7 +43,7 @@ export function GET(req: NextRequest) {
     );
   }
 
-  const channelId = Number(req.nextUrl.searchParams.get("channel_id"));
+  const channelId = Number(form.get("channel_id"));
   if (!Number.isSafeInteger(channelId) || channelId <= 0) {
     return channelPage(redirectUri, "Choose an existing Instagram channel before connecting.");
   }
