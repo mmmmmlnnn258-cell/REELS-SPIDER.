@@ -13,6 +13,7 @@ export const INSTAGRAM_SCOPES = [
   "instagram_business_content_publish",
   "instagram_business_manage_comments",
   "instagram_business_manage_messages",
+  "instagram_business_manage_insights",
 ] as const;
 
 export function createInstagramOAuthState(): string {
