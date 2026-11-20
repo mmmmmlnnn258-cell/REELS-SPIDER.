@@ -15,6 +15,7 @@ def _menu() -> dict:
     return {"inline_keyboard": [
         [{"text": "🚀 نشر الآن", "callback_data": "bs:publish"}],
         [{"text": "📅 إدارة الجدولة", "callback_data": "bs:schedule"}],
+        [{"text": "👤 الحسابات المرتبطة", "callback_data": "bs:accounts"}],
         [{"text": "📊 حالة النظام", "callback_data": "bs:status"},
          {"text": "🗓 المنشورات القادمة", "callback_data": "bs:posts"}],
         [{"text": "💬 إدارة التعليقات", "callback_data": "bs:comments"},
@@ -533,6 +534,46 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 keyboard.append(navigation)
             keyboard.append([{"text": "↩ القائمة", "callback_data": "bs:menu"}])
             _send(client, token, chat_id, body, {"inline_keyboard": keyboard})
+            return True
+
+        if data == "bs:accounts":
+            rows = conn.execute(
+                """SELECT id, platform, account_name, remote_account_id, linked_page_id,
+                          access_token, is_active
+                     FROM channels
+                    WHERE platform IN ('instagram', 'facebook')
+                    ORDER BY platform, id"""
+            ).fetchall()
+            if not rows:
+                body = (
+                    "👤 الحسابات المرتبطة\n"
+                    "لا توجد قنوات Instagram أو Facebook محفوظة حتى الآن."
+                )
+            else:
+                labels = {"instagram": "Instagram", "facebook": "Facebook Page"}
+                lines = ["👤 الحسابات المرتبطة"]
+                for row in rows:
+                    platform = labels.get(row["platform"], row["platform"])
+                    has_identity = bool(str(row["remote_account_id"] or "").strip())
+                    has_token = bool(str(row["access_token"] or "").strip())
+                    if row["is_active"] and has_identity and has_token:
+                        state = "✅ متصل ونشط"
+                    elif has_identity and has_token:
+                        state = "⏸ متصل لكنه غير نشط"
+                    else:
+                        state = "⚠️ الربط غير مكتمل"
+                    lines.append(
+                        f"\n#{row['id']} · {platform}\n"
+                        f"الاسم: {row['account_name'] or 'غير محدد'}\n"
+                        f"المعرّف: {row['remote_account_id'] or 'غير متوفر'}\n"
+                        f"حالة الصفحة المرتبطة: {row['linked_page_id'] or '—'}\n"
+                        f"الحالة: {state}"
+                    )
+                body = "\n".join(lines)[:3900]
+            _send(client, token, chat_id, body, {"inline_keyboard": [
+                [{"text": "🔄 تحديث", "callback_data": "bs:accounts"}],
+                [{"text": "↩ القائمة", "callback_data": "bs:menu"}],
+            ]})
             return True
 
         if data == "bs:status":
