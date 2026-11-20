@@ -1,7 +1,8 @@
 """Database access for the worker.
 
-Thin helpers over sqlite3. Every connection enables WAL + foreign keys (foreign_keys
-is per-connection and must be set each time). Row factory returns dict-like rows.
+Thin helpers over sqlite3. WAL is enabled once by migrate.py before the worker and
+ dashboard start; foreign_keys is per-connection and must be set each time. Row factory
+ returns dict-like rows.
 """
 
 from __future__ import annotations
@@ -54,7 +55,6 @@ def connect(database_path: Path) -> sqlite3.Connection:
     )
     conn.row_factory = _channel_row_factory
     conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS};")
-    conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
