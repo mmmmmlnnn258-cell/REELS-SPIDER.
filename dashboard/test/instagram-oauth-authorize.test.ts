@@ -52,8 +52,14 @@ test("authorize starts OAuth for the selected existing Instagram channel only", 
   assert.equal(location.searchParams.get("response_type"), "code");
   assert.equal(location.searchParams.get("enable_fb_login"), "false");
   assert.match(location.searchParams.get("state") ?? "", /^[0-9a-f]{64}$/);
-  assert.ok(location.searchParams.get("scope")?.includes("instagram_business_basic"));
-  assert.ok(location.searchParams.get("scope")?.includes("instagram_business_manage_insights"));
+  const grantedScopes = new Set((location.searchParams.get("scope") ?? "").split(" "));
+  assert.deepEqual([...grantedScopes].sort(), [
+    "instagram_business_basic",
+    "instagram_business_content_publish",
+    "instagram_business_manage_comments",
+    "instagram_business_manage_messages",
+  ].sort());
+  assert.equal(grantedScopes.has("instagram_business_manage_insights"), false);
   assert.equal(response.headers.get("cache-control"), "no-store");
 
   const cookies = response.cookies.getAll();
