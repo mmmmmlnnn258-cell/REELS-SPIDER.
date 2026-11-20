@@ -20,7 +20,7 @@ CREATE TABLE users (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   email          TEXT NOT NULL COLLATE NOCASE UNIQUE
                  CHECK (length(trim(email)) > 2),
-  password_hash  TEXT NOT NULL CHECK (length(password_hash) > 20),
+  password_hash  TEXT NOT NULL CHECK (password_hash LIKE 'scrypt$v1$%'),
   status         TEXT NOT NULL DEFAULT 'active'
                  CHECK (status IN ('active', 'disabled')),
   created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -42,16 +42,16 @@ CREATE TABLE tenant_memberships (
 -- A session stores only a SHA-256 token digest, never the bearer token.
 -- Composite FK ensures a session can only exist for an actual tenant membership.
 CREATE TABLE tenant_sessions (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  tenant_id      INTEGER NOT NULL,
-  user_id        INTEGER NOT NULL,
-  token_hash     TEXT NOT NULL UNIQUE
-                 CHECK (length(token_hash) = 64 AND token_hash NOT GLOB '*[^0-9a-f]*'),
-  created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  expires_at     TEXT NOT NULL,
-  last_seen_at   TEXT,
-  revoked_at     TEXT,
-  ip_hash        TEXT,
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id       INTEGER NOT NULL,
+  user_id         INTEGER NOT NULL,
+  token_hash      TEXT NOT NULL UNIQUE
+                  CHECK (length(token_hash) = 64 AND token_hash NOT GLOB '*[^0-9a-f]*'),
+  created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at      TEXT NOT NULL,
+  last_seen_at    TEXT,
+  revoked_at      TEXT,
+  ip_hash         TEXT,
   user_agent_hash TEXT,
   FOREIGN KEY (tenant_id, user_id)
     REFERENCES tenant_memberships(tenant_id, user_id) ON DELETE CASCADE
