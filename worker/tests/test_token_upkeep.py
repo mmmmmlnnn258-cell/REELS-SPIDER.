@@ -206,9 +206,14 @@ def test_explicit_instagram_login_refresh_ignores_global_graph_base(conn, config
     assert session.calls[0][0] == "https://graph.instagram.com/refresh_access_token"
 
     # A rotated token must remain encrypted at rest, not just the initial OAuth token.
-    raw = conn.execute(
-        "SELECT access_token FROM channels WHERE id = ?", (channel["id"],)
-    ).fetchone()["access_token"]
+    import sqlite3
+    raw_conn = sqlite3.connect(conn.execute("PRAGMA database_list").fetchone()[2])
+    try:
+        raw = raw_conn.execute(
+            "SELECT access_token FROM channels WHERE id = ?", (channel["id"],)
+        ).fetchone()[0]
+    finally:
+        raw_conn.close()
     from worker.token_crypto import decrypt_token, is_encrypted
     assert is_encrypted(raw)
     assert decrypt_token(raw) == NEW
