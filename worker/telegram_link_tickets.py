@@ -184,9 +184,10 @@ def notify_link_ticket_results(conn, config, client, *, logger=None, limit: int 
             message = "❌ تعذر ربط حساب Instagram. " + str(row["failure_reason"] or "افتح الحسابات وحاول مجدداً.")
         try:
             client.send_message(token, str(row["telegram_chat_id"]), message[:3500])
-        except Exception as exc:
+        except Exception:
+            # Telegram errors may contain request URLs with the bot token; never log them.
             if logger:
-                logger.warning("Could not deliver Instagram link result for ticket %s: %s", row["id"], exc)
+                logger.warning("Could not deliver Instagram link result for ticket %s; delivery will be retried.", row["id"])
             continue
         changed = conn.execute(
             "UPDATE telegram_account_link_tickets SET notified_at=? WHERE id=? AND notified_at IS NULL",
