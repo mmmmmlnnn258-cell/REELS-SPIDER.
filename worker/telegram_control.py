@@ -561,6 +561,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                     WHERE platform = 'instagram'
                     ORDER BY platform, id"""
             ).fetchall()
+            link_buttons = []
             if not rows:
                 body = (
                     "👤 الحسابات المرتبطة\n"
