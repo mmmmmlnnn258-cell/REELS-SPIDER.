@@ -11,6 +11,9 @@ let seq = 0;
 
 async function setup() {
   if (!setupPromise) {
+    process.env.TOKEN_ENCRYPTION_KEY = Buffer.from(
+      Array.from({ length: 32 }, (_, index) => index),
+    ).toString("base64");
     process.env.META_APP_ID = "test-meta-app";
     process.env.INSTAGRAM_APP_ID = "test-instagram-app";
     process.env.INSTAGRAM_APP_SECRET = "test-instagram-secret";
