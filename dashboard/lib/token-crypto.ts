@@ -1,11 +1,12 @@
 import "server-only";
+import { config } from "./config";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
 const PREFIX = "enc:v1:";
 const AAD = Buffer.from("reels-spider:channels:instagram:access_token:v1", "utf8");
 
 function encryptionKey(): Buffer {
-  const encoded = process.env.TOKEN_ENCRYPTION_KEY ?? "";
+  const encoded = process.env.TOKEN_ENCRYPTION_KEY ?? config.tokenEncryptionKey;
   let key: Buffer;
   try {
     key = Buffer.from(encoded, "base64");
