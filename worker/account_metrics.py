@@ -490,7 +490,7 @@ def _due(last: str | None, now, hours: int, forced: bool) -> bool:
 def run_account_metrics(conn, config, client=None, now=None, logger=None,
                         client_for=None) -> int:
     """Refresh account-level metrics and (daily) demographics. Returns channels synced."""
-    pick_client = client_for or (lambda _platform: client)
+    pick_client = client_for or (lambda _channel: client)
     budget = CallBudget(config.insights_max_calls_per_cycle, config.insights_usage_pct_ceiling)
     rows = conn.execute("SELECT * FROM channels WHERE is_active = 1").fetchall()
     synced = 0
@@ -510,7 +510,7 @@ def run_account_metrics(conn, config, client=None, now=None, logger=None,
             # disagree), and this loop's whole contract is that one bad channel must not
             # stop the rest. It sat outside for as long as every platform with a sync
             # also had a client — which stopped being true the moment Facebook got one.
-            client_obj = pick_client(channel["platform"])
+            client_obj = pick_client(channel)
             sync(conn, config, client_obj, channel, now, budget, logger=logger)
             # Demographics move slowly and cost twelve calls, so they keep their own,
             # slower clock rather than riding this one.

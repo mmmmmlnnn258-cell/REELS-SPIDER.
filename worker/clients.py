@@ -1,13 +1,12 @@
-"""Which Graph API host to talk to, per channel platform.
+"""Resolve API clients by platform and, for Instagram, per-channel login method.
 
-META_GRAPH_BASE is a per-INSTALL setting, but the correct host is really a per-PLATFORM
-fact: Facebook Pages always live on graph.facebook.com, while Instagram may be reached
-via graph.facebook.com (Facebook-Login path) or graph.instagram.com (Instagram-Login
-path) depending on how this install is set up. So FB pins its own host and IG keeps
-whatever the install configured — which lets one install mix IG and FB channels.
+Explicit Instagram Facebook Login channels use graph.facebook.com; explicit Instagram
+Login channels use graph.instagram.com. Rows from before migration 0038 are marked
+legacy and retain their historical META_GRAPH_BASE behavior until reconnected or
+classified. Facebook Pages remain pinned to graph.facebook.com regardless.
 
-Clients are cached per base URL: they hold a requests.Session, so reusing them keeps
-connection pooling and avoids rebuilding one per publication.
+Clients are cached by platform, base URL and API version so mixed Instagram login paths
+cannot share a client accidentally.
 """
 
 from __future__ import annotations
@@ -22,6 +21,7 @@ from .telegram_api import TelegramClient
 from .tiktok_api import TikTokClient
 
 FACEBOOK_BASE = "https://graph.facebook.com"
+INSTAGRAM_BASE = "https://graph.instagram.com"
 THREADS_BASE = "https://graph.threads.net"
 DISCORD_BASE = "https://discord.com/api/v10"
 TELEGRAM_BASE = "https://api.telegram.org"
@@ -200,15 +200,25 @@ assert set(PLATFORM_CAPS) == set(SUPPORTED_PLATFORMS), (
 )
 
 
-def base_url_for(platform: str, config: Config) -> str:
-    """The Graph API base URL to use for a channel on `platform`.
+def base_url_for(platform: str, config: Config, channel=None) -> str:
+    """Resolve the API host for a platform and, for Instagram, its channel auth path.
 
-    Raises UnknownPlatform rather than guessing. Falling back to the install's configured
-    base is how an unrecognised platform ends up quietly talking to Instagram's API.
+    Rows predating migration 0038 are legacy and intentionally retain the historical
+    META_GRAPH_BASE behavior. Explicit Facebook/Instagram Login channels are pinned to
+    their matching host, so one install can safely mix both login paths.
     """
     resolver = _BASE_URLS.get(platform)
     if resolver is None:
         raise UnknownPlatform(platform)
+    if platform == "instagram" and channel is not None:
+        keys = channel.keys() if hasattr(channel, "keys") else ()
+        method = channel["instagram_auth_method"] if "instagram_auth_method" in keys else "legacy"
+        if method == "instagram_login":
+            return INSTAGRAM_BASE
+        if method == "facebook_login":
+            return FACEBOOK_BASE
+        if method != "legacy":
+            raise ValueError(f"Unknown Instagram auth method: {method!r}")
     return resolver(config)
 
 
@@ -257,8 +267,19 @@ class ClientRegistry:
         self._factory = factory
         self._cache: dict[tuple[str, str, str], object] = {}
 
-    def for_platform(self, platform: str):
-        base = base_url_for(platform, self._config)
+    def for_platform(self, platform_or_channel):
+        """Resolve a client from a platform name or a complete channel row.
+
+        Passing a channel is required for per-channel Instagram Login selection.
+        Platform strings remain supported for platform-only callers and legacy tests.
+        """
+        if isinstance(platform_or_channel, str):
+            platform = platform_or_channel
+            channel = None
+        else:
+            channel = platform_or_channel
+            platform = channel["platform"]
+        base = base_url_for(platform, self._config, channel)
         version = api_version_for(platform, self._config)
         key = (platform, base, version)
         if key not in self._cache:

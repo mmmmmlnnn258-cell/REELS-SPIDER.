@@ -131,11 +131,15 @@ def instagram_metrics_for(media) -> list[str]:
     Keyed on media_product_type first because that is what separates a Reel from a feed
     post; media_type ('VIDEO') does not, since a feed video is not a Reel.
     """
-    extras = (
-        REELS_EXTRA_METRICS
-        if (media["media_product_type"] or "").upper() == "REELS"
-        else FEED_EXTRA_METRICS
-    )
+    surface = (media["media_product_type"] or "").upper()
+    if surface == "REELS":
+        extras = REELS_EXTRA_METRICS
+    elif surface == "FEED":
+        extras = FEED_EXTRA_METRICS
+    else:
+        # Instagram Login does not expose media_product_type. Without a reliable surface,
+        # ask only for metrics known to be shared by all media rather than guessing FEED.
+        extras = []
     return [*REQUESTED_METRICS, *extras]
 
 
@@ -272,7 +276,7 @@ def sync_channel_media_metrics(conn, config, client, channel, now, budget,
 def run_media_metrics(conn, config, client=None, now=None, logger=None,
                       client_for=None) -> int:
     """Refresh per-post metrics for every channel. Returns posts recorded."""
-    pick_client = client_for or (lambda _platform: client)
+    pick_client = client_for or (lambda _channel: client)
     budget = CallBudget(config.insights_max_calls_per_cycle, config.insights_usage_pct_ceiling)
     rows = conn.execute("SELECT * FROM channels WHERE is_active = 1").fetchall()
     total = 0
@@ -287,7 +291,7 @@ def run_media_metrics(conn, config, client=None, now=None, logger=None,
             # Inside the guard: pick_client can raise UnknownPlatform when a channel's
             # platform is missing from the client registries, and doing that above the
             # try killed the whole pass — defeating the per-channel except below.
-            client_obj = pick_client(channel["platform"])
+            client_obj = pick_client(channel)
             result = sync_channel_media_metrics(
                 conn, config, client_obj, channel, now, budget, logger=logger
             )

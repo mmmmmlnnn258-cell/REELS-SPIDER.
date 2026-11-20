@@ -16,10 +16,14 @@ export function ChannelCredentials({
   channelId,
   platform,
   remoteAccountId,
+  instagramAuthMethod,
+  hasAccessToken,
 }: {
   channelId: number;
   platform: string;
   remoteAccountId: string | null;
+  instagramAuthMethod?: string;
+  hasAccessToken?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -57,6 +61,24 @@ export function ChannelCredentials({
   const field =
     "w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-sm text-ink focus:border-brand";
 
+  // Instagram Login credentials are written only by the verified OAuth callback.
+  // Keep the legacy editor for older Facebook Login/legacy channels, but never offer
+  // a manual token or account-id editor for an OAuth-managed Instagram Login channel.
+  if (
+    platform === "instagram" &&
+    (instagramAuthMethod === "instagram_login" || !hasAccessToken)
+  ) {
+    return (
+      <div className="mt-3 rounded-lg border border-border bg-surface-sunken/40 p-3">
+        <p className="text-xs font-medium text-ink-soft">Instagram credentials</p>
+        <p className="mt-1 text-[11px] text-muted">
+          تُدار بيانات الاتصال عبر Instagram OAuth. استخدم زر «ربط Instagram» أو
+          «Reconnect Instagram» على البطاقة؛ لا حاجة لإدخال رقم الحساب أو نسخ رمز وصول يدوياً.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="mt-3 rounded-lg border border-border bg-surface-sunken/40 p-3">
       <button
@@ -72,6 +94,11 @@ export function ChannelCredentials({
 
       {open ? (
         <div className="mt-3 space-y-2.5">
+          {platform === "instagram" ? (
+            <p className="text-[11px] text-muted">
+              Instagram login method is managed automatically when a verified Instagram OAuth connection completes. It cannot be changed separately from its access token.
+            </p>
+          ) : null}
           {usesAccountId(platform) ? (
             <label className="block text-xs text-ink-soft">
               <span className="mb-1 block">

@@ -205,11 +205,16 @@ def exchange_instagram_token(config: Config, short_lived: str) -> tuple[str, int
     only on the Instagram-Login host, so honouring a graph.facebook.com setting here
     would 400 with an unhelpful message.
     """
+    if not config.instagram_app_secret:
+        raise ExchangeError(
+            "INSTAGRAM_APP_SECRET is missing. Configure the Instagram-specific app secret; "
+            "META_APP_SECRET is not interchangeable."
+        )
     data = _get(
         "https://graph.instagram.com/access_token",
         {
             "grant_type": "ig_exchange_token",
-            "client_secret": config.instagram_app_secret or config.meta_app_secret,
+            "client_secret": config.instagram_app_secret,
             "access_token": short_lived,
         },
     )

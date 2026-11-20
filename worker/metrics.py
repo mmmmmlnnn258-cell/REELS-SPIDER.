@@ -353,7 +353,7 @@ assert set(_FETCHERS) == set(SUPPORTED_PLATFORMS), (
 def run_metrics(conn, config: Config, client, now, logger=None, client_for=None) -> int:
     """Fetch + store metrics for all due publications. Returns count fetched."""
     now_iso = now.isoformat()
-    pick_client = client_for or (lambda _platform: client)
+    pick_client = client_for or (lambda _channel: client)
     due = publications_needing_metrics(
         conn, now, config.metrics_max_age_days, config.metrics_min_interval_hours
     )
@@ -362,7 +362,7 @@ def run_metrics(conn, config: Config, client, now, logger=None, client_for=None)
         was_flagged = pub["metrics_refresh_requested_at"] is not None
         try:
             channel = conn.execute(
-                "SELECT access_token, platform FROM channels WHERE id = ?",
+                "SELECT * FROM channels WHERE id = ?",
                 (pub["channel_id"],),
             ).fetchone()
             token = channel["access_token"] if channel else None
@@ -389,7 +389,7 @@ def run_metrics(conn, config: Config, client, now, logger=None, client_for=None)
                 continue
             try:
                 insights = fetch(
-                    pick_client(platform), pub["remote_post_id"], token,
+                    pick_client(channel), pub["remote_post_id"], token,
                     config, logger, pub["id"],
                     pub["surface"] if "surface" in pub.keys() else "feed",
                 )

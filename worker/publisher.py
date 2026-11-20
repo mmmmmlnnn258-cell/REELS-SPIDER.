@@ -1238,7 +1238,7 @@ def run_first_comment_retries(conn, config, client, now, *, logger=None,
             logger.info("DRY-RUN: %d first-comment retry request(s) left queued", len(rows))
         return 0
 
-    pick_client = client_for or (lambda _platform: client)
+    pick_client = client_for or (lambda _channel: client)
     done = 0
     for pub in rows:
         channel = db.get_channel(conn, pub["channel_id"])
@@ -1256,7 +1256,7 @@ def run_first_comment_retries(conn, config, client, now, *, logger=None,
             conn, pub["id"], first_comment_retry_requested=0, updated_at=_iso(now)
         )
         try:
-            pub_client = pick_client(channel["platform"])
+            pub_client = pick_client(channel)
         except UnknownPlatform:
             continue
         _post_first_comment(

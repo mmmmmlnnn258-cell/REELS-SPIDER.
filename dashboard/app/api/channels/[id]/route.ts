@@ -17,7 +17,8 @@ export async function PATCH(
 ) {
   const { id } = await params;
   const channelId = Number(id);
-  if (!getChannel(channelId)) {
+  const existingChannel = getChannel(channelId);
+  if (!existingChannel) {
     return NextResponse.json({ error: "Channel not found." }, { status: 404 });
   }
   // A parsed JSON body genuinely has no known shape; every field below is validated
@@ -53,6 +54,29 @@ export async function PATCH(
   if ("timezone" in body) {
     return NextResponse.json(
       { error: "Change the timezone via POST /api/channels/[id]/timezone." },
+      { status: 400 }
+    );
+  }
+  // The auth method selects the Graph API host and token lifecycle. It must only
+  // change inside connectInstagramChannel(), which stores the verified account id,
+  // token, expiry, and method atomically after OAuth. A generic PATCH must never
+  // leave an old credential paired with a new API host.
+  if ("instagram_auth_method" in body) {
+    return NextResponse.json(
+      { error: "Instagram login method can only be changed by completing Instagram OAuth." },
+      { status: 400 }
+    );
+  }
+  // Instagram Login credentials are a single verified tuple written atomically by
+  // connectInstagramChannel() after OAuth. Do not let the generic channel editor
+  // replace either half (account id or token) independently.
+  if (
+    existingChannel.platform === "instagram" &&
+    existingChannel.instagram_auth_method === "instagram_login" &&
+    ("remote_account_id" in body || "access_token" in body)
+  ) {
+    return NextResponse.json(
+      { error: "Instagram Login account ID and access token can only be changed by completing Instagram OAuth." },
       { status: 400 }
     );
   }

@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 from . import db
-from .clients import FACEBOOK_BASE, THREADS_BASE
+from .clients import FACEBOOK_BASE, INSTAGRAM_BASE, THREADS_BASE
 from .redact import redact
 
 # Renew with two weeks to spare: a Mac that is off for a week, or a Meta outage, still
@@ -41,7 +41,11 @@ RETRY_AFTER = timedelta(hours=1)
 
 _PLATFORMS = ("instagram", "threads", "facebook")
 
-RECONNECT = "Reconnect it: Channels → Credentials → Edit, paste a new token."
+def _reconnect_for(channel, config) -> str:
+    """Give recovery instructions that match the channel credential flow."""
+    if channel["platform"] == "instagram" and _uses_instagram_login(channel, config):
+        return "Reconnect it: Channels → select this channel → Connect Instagram."
+    return "Reconnect it: Channels → Credentials → Edit, update the platform token."
 
 
 class _Transient(Exception):
@@ -94,8 +98,17 @@ def _from_epoch(value) -> datetime | None:
     return datetime.fromtimestamp(value, tz=timezone.utc)
 
 
-def _uses_instagram_login(config) -> bool:
-    return "graph.instagram.com" in (config.graph_base or "")
+def _uses_instagram_login(channel, config) -> bool:
+    """Resolve token lifecycle from the channel, falling back only for legacy rows."""
+    keys = channel.keys() if hasattr(channel, "keys") else ()
+    method = channel["instagram_auth_method"] if "instagram_auth_method" in keys else "legacy"
+    if method == "instagram_login":
+        return True
+    if method == "facebook_login":
+        return False
+    if method == "legacy":
+        return "graph.instagram.com" in (config.graph_base or "")
+    raise ValueError(f"Unknown Instagram auth method: {method!r}")
 
 
 # -- per-platform steps ------------------------------------------------------------------
@@ -128,7 +141,7 @@ def _check_threads(session, config, channel, now: datetime) -> dict:
         session, f"{THREADS_BASE}/{config.threads_api_version}/debug_token", token, token
     )
     if not info.get("is_valid"):
-        return {"token_error": f"Meta says this Threads token is no longer valid. {RECONNECT}"}
+        return {"token_error": f"Meta says this Threads token is no longer valid. {_reconnect_for(channel, config)}"}
     expires = _from_epoch(info.get("expires_at"))
     update = {"token_expires_at": expires.isoformat() if expires else None, "token_error": None}
     if expires and expires - now <= RENEW_WITHIN:
@@ -138,7 +151,7 @@ def _check_threads(session, config, channel, now: datetime) -> dict:
             ))
         except _MetaError as exc:
             # Keep the expiry we just learned — the card's countdown is the warning.
-            update["token_error"] = f"Automatic renewal failed: {exc}. {RECONNECT}"
+            update["token_error"] = f"Automatic renewal failed: {exc}. {_reconnect_for(channel, config)}"
     return update
 
 
@@ -147,7 +160,7 @@ def _check_instagram_login(session, config, channel, now: datetime) -> dict:
     expires = _parse(channel["token_expires_at"])
     if expires and expires - now > RENEW_WITHIN:
         return {}
-    base = config.graph_base.rstrip("/")
+    base = INSTAGRAM_BASE
     try:
         return _renew(session, f"{base}/refresh_access_token", "ig_refresh_token", token, now)
     except _MetaError:
@@ -171,7 +184,7 @@ def _check_via_app_token(session, config, channel, now: datetime) -> dict:
         f"{config.meta_app_id}|{config.meta_app_secret}",
     )
     if not info.get("is_valid"):
-        return {"token_error": f"Meta says this token is no longer valid. {RECONNECT}"}
+        return {"token_error": f"Meta says this token is no longer valid. {_reconnect_for(channel, config)}"}
     expires = _from_epoch(info.get("expires_at"))
     update = {"token_expires_at": expires.isoformat() if expires else None, "token_error": None}
     if expires and expires - now <= RENEW_WITHIN:
@@ -180,15 +193,16 @@ def _check_via_app_token(session, config, channel, now: datetime) -> dict:
             # %b plus .day, not %-d: that flag does not exist on Windows.
             f"This token expires {expires:%b} {expires.day} and can't be renewed "
             f"automatically. "
-            f"{RECONNECT}"
+            f"{_reconnect_for(channel, config)}"
         )
     return update
 
 
-def _step_for(platform: str, config):
+def _step_for(channel, config):
+    platform = channel["platform"]
     if platform == "threads":
         return _check_threads
-    if platform == "instagram" and _uses_instagram_login(config):
+    if platform == "instagram" and _uses_instagram_login(channel, config):
         return _check_instagram_login
     return _check_via_app_token
 
@@ -199,7 +213,7 @@ def check_channel(conn, config, channel, now: datetime, session=None, logger=Non
     """Check (and if due, renew) one channel's token. Returns what happened, for logs and
     tests: 'renewed', 'ok', 'error', or 'retry'. Never raises for an API problem."""
     session = session or requests.Session()
-    step = _step_for(channel["platform"], config)
+    step = _step_for(channel, config)
     label = f"[token] channel {channel['id']} ({channel['platform']})"
     try:
         update = step(session, config, channel, now)
@@ -211,9 +225,9 @@ def check_channel(conn, config, channel, now: datetime, session=None, logger=Non
         return "retry"
     except _MetaError as exc:
         if exc.code == 190:
-            message = f"Meta says this token is no longer valid ({exc}). {RECONNECT}"
+            message = f"Meta says this token is no longer valid ({exc}). {_reconnect_for(channel, config)}"
         else:
-            message = f"Automatic renewal failed: {exc}. {RECONNECT}"
+            message = f"Automatic renewal failed: {exc}. {_reconnect_for(channel, config)}"
         update = {"token_error": message}
 
     update["token_next_check_at"] = (now + CHECK_EVERY).isoformat()

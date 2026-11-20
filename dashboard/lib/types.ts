@@ -61,6 +61,8 @@ export interface PeriodLink {
 }
 
 export interface Channel {
+  /** Instagram Login route used by this channel; legacy preserves pre-migration behavior. */
+  instagram_auth_method: "legacy" | "facebook_login" | "instagram_login";
   id: number;
   platform: Platform;
   account_name: string;
@@ -69,6 +71,7 @@ export interface Channel {
   remote_account_id: string | null;
   linked_page_id: string | null;
   access_token: string | null;
+  refresh_token?: string | null;
   token_expires_at: string | null;
   // Written by the worker's token upkeep (worker/token_upkeep.py). token_error is what a
   // human must fix; token_next_check_at is NULL until the worker has looked at the token.

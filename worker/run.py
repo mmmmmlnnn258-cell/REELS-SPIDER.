@@ -48,9 +48,9 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
     below. Opt-in, and False by default, so only a caller that has actually proved no
     other worker exists can turn it on.
     """
-    # A channel's platform decides which Graph host to use (see clients.base_url_for).
+    # A channel's platform and Instagram login method decide its Graph host (see clients.base_url_for).
     # Without a resolver (tests, --once with a single client) everything uses `client`.
-    pick_client = client_for or (lambda _platform: client)
+    pick_client = client_for or (lambda _channel: client)
 
     load_env(override=True)  # pick up live edits to the switches
 
@@ -180,7 +180,7 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
                 break
             channel = db.get_channel(conn, pub["channel_id"])
             try:
-                pub_client = pick_client(channel["platform"]) if channel else client
+                pub_client = pick_client(channel) if channel else client
             except UnknownPlatform:
                 platform = channel["platform"] if channel else None
                 from .publisher import _PUBLISHERS  # local import: keep module load light

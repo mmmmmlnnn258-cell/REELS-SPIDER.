@@ -7,17 +7,46 @@ is per-connection and must be set each time). Row factory returns dict-like rows
 from __future__ import annotations
 
 import sqlite3
+
+from worker.token_crypto import decrypt_token, encrypt_token, is_encrypted
 from datetime import datetime, timedelta
 from pathlib import Path
 
 
+class _DecryptedTokenRow:
+    """sqlite3.Row-compatible wrapper for rows containing encrypted access tokens."""
+    def __init__(self, names, values):
+        self._names = tuple(names)
+        self._values = tuple(values)
+        self._by_name = dict(zip(self._names, self._values))
+    def __getitem__(self, key):
+        return self._values[key] if isinstance(key, (int, slice)) else self._by_name[key]
+    def __iter__(self): return iter(self._values)
+    def __len__(self): return len(self._values)
+    def keys(self): return self._names
+    def values(self): return self._values
+    def items(self): return zip(self._names, self._values)
+
+
+def _channel_row_factory(cursor, values):
+    names = [column[0] for column in cursor.description]
+    if "access_token" not in names:
+        return sqlite3.Row(cursor, values)
+    index = names.index("access_token")
+    token = values[index]
+    if not is_encrypted(token):
+        return sqlite3.Row(cursor, values)
+    decoded = list(values)
+    decoded[index] = decrypt_token(token)
+    return _DecryptedTokenRow(names, decoded)
+
+
 def connect(database_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(database_path))
-    conn.row_factory = sqlite3.Row
+    conn.row_factory = _channel_row_factory
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
-
 
 def fetch_due_publications(conn: sqlite3.Connection, now_iso: str) -> list[sqlite3.Row]:
     """Publications that are ready to be worked: scheduled, past their time, and either
@@ -194,6 +223,13 @@ def update_channel(conn: sqlite3.Connection, channel_id: int, **fields) -> None:
     """
     if not fields:
         return
+    if "access_token" in fields and fields["access_token"]:
+        current = conn.execute(
+            "SELECT platform, instagram_auth_method FROM channels WHERE id = ?",
+            (channel_id,),
+        ).fetchone()
+        if current and current["platform"] == "instagram" and current["instagram_auth_method"] == "instagram_login":
+            fields["access_token"] = encrypt_token(fields["access_token"])
     cols = ", ".join(f"{k} = ?" for k in fields)
     values = list(fields.values()) + [channel_id]
     conn.execute(f"UPDATE channels SET {cols} WHERE id = ?", values)

@@ -84,6 +84,8 @@ def parse_meta_timestamp(raw: str | None) -> str | None:
 
 
 def _map_instagram(item: dict) -> dict:
+    # Instagram Login does not expose caption or media_product_type on IG Media.
+    # Preserve None rather than guessing a caption or FEED/REELS/STORY surface.
     return {
         "remote_post_id": item.get("id"),
         "media_type": item.get("media_type"),
@@ -110,9 +112,16 @@ def _map_threads(item: dict) -> dict:
 
 
 def _list_instagram(client, channel, page_size, next_url):
+    keys = channel.keys() if hasattr(channel, "keys") else ()
+    method = channel["instagram_auth_method"] if "instagram_auth_method" in keys else "legacy"
+    instagram_login = method == "instagram_login" or (
+        method == "legacy" and "graph.instagram.com" in getattr(client, "base", "")
+    )
+    kwargs = {"limit": page_size, "next_url": next_url}
+    if instagram_login:
+        kwargs["fields"] = client.INSTAGRAM_LOGIN_MEDIA_FIELDS
     return client.get_user_media(
-        channel["remote_account_id"], channel["access_token"],
-        limit=page_size, next_url=next_url,
+        channel["remote_account_id"], channel["access_token"], **kwargs,
     )
 
 
@@ -450,7 +459,7 @@ def run_media_sync(conn, config, client=None, now=None, logger=None, client_for=
     Signature mirrors run_metrics: `client_for` resolves the right Graph host per
     platform, falling back to a single shared client when a caller has only one.
     """
-    pick_client = client_for or (lambda _platform: client)
+    pick_client = client_for or (lambda _channel: client)
     budget = CallBudget(config.insights_max_calls_per_cycle, config.insights_usage_pct_ceiling)
     rows = conn.execute("SELECT * FROM channels WHERE is_active = 1").fetchall()
     synced = 0
@@ -464,7 +473,7 @@ def run_media_sync(conn, config, client=None, now=None, logger=None, client_for=
             continue
         client_obj = None
         try:
-            client_obj = pick_client(channel["platform"])
+            client_obj = pick_client(channel)
             sync_channel_media(conn, config, client_obj, channel, now, budget, logger=logger)
             synced += 1
         except Exception as exc:  # noqa: BLE001 — one bad channel must not stop the rest

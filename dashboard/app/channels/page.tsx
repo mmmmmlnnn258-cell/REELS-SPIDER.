@@ -48,12 +48,21 @@ export default async function ChannelsPage({
     tiktok_connected?: string;
     tiktok_reconnected?: string;
     tiktok_error?: string;
+    instagram_connected?: string;
+    instagram_username?: string;
+    instagram_error?: string;
   }>;
 }) {
   // The TikTok OAuth callback redirects here with an outcome. Without showing it, a failed
   // connection looks identical to a successful one that simply has not appeared yet.
   const params = await searchParams;
   const channels = getChannels();
+  // Never serialize credentials into the React Server Component payload.
+  const displayChannels = channels.map(({ access_token, refresh_token, ...channel }) => ({
+    ...channel,
+    has_access_token: Boolean(access_token),
+    has_refresh_token: Boolean(refresh_token),
+  }));
   // One clock reading for every card's token countdown.
   const nowMs = Date.parse(nowIso());
   const groups = listChannelGroups().map((g) => {
@@ -116,12 +125,25 @@ export default async function ChannelsPage({
             {params.tiktok_error}
           </div>
         ) : null}
+        {params.instagram_connected ? (
+          <div className="rounded-card border border-status-posted bg-surface-muted p-4 text-sm text-ink-soft">
+            <span className="font-medium text-ink">Instagram connected.</span>{" "}
+            {params.instagram_username
+              ? `@${params.instagram_username} was linked to channel #${params.instagram_connected}.`
+              : `Channel #${params.instagram_connected} was linked successfully.`}
+          </div>
+        ) : null}
+        {params.instagram_error ? (
+          <div className="rounded-card border border-status-failed bg-surface-muted p-4 text-sm text-status-failed">
+            {params.instagram_error}
+          </div>
+        ) : null}
         <ChannelForm
           defaultTimezone={config.defaultTimezone}
           nextChannelId={channels.reduce((max, c) => Math.max(max, c.id), 0) + 1}
         />
 
-        {channels.length === 0 ? (
+        {displayChannels.length === 0 ? (
           <EmptyState title="No channels configured">
             Add your first account above — Instagram, Facebook, Threads, Discord,
             Telegram, or TikTok. Most need an account id and a long-lived access token;
@@ -135,7 +157,7 @@ export default async function ChannelsPage({
             bandTimes={config.bandTimes}
           />
           <div className="grid gap-4 md:grid-cols-2">
-            {channels.map((c) => (
+            {displayChannels.map((c) => (
               <div
                 key={c.id}
                 className={`rounded-card border bg-surface p-5 ${
@@ -189,7 +211,7 @@ export default async function ChannelsPage({
                     <TokenStatus channel={c} nowMs={nowMs} />
                   </Row>
                 </dl>
-                {c.access_token && c.token_error && TOKEN_UPKEEP.has(c.platform) ? (
+                {c.has_access_token && c.token_error && TOKEN_UPKEEP.has(c.platform) ? (
                   <p className="mt-2 rounded-md bg-status-failed/10 px-2.5 py-1.5 text-[11px] text-status-failed">
                     {c.token_error}
                   </p>
@@ -213,9 +235,12 @@ export default async function ChannelsPage({
                 </div>
 
                 <ChannelCredentials
+                  key={`${c.id}-${c.instagram_auth_method}`}
                   channelId={c.id}
                   platform={c.platform}
                   remoteAccountId={c.remote_account_id}
+                  instagramAuthMethod={c.instagram_auth_method}
+                  hasAccessToken={c.has_access_token}
                 />
 
                 {/* A grouped channel doesn't own its timezone — the group does, and
@@ -242,6 +267,34 @@ export default async function ChannelsPage({
                     channel needs re-authorizing when its yearly refresh token expires or
                     when a new scope is added, and routing that through "Add channel"
                     both hides it and implies it would create a duplicate. */}
+                {c.platform === "instagram" ? (
+                  <div className="mt-3 rounded-lg border border-border bg-surface-sunken/40 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-ink-soft">Instagram connection</p>
+                        <p className="mt-0.5 text-[11px] text-muted">
+                          {c.has_access_token && c.remote_account_id
+                            ? "This channel is linked. Reconnect only if its access needs refreshing."
+                            : "Connect this existing channel securely with Instagram. Its name, timezone, queue and history will be kept."}
+                        </p>
+                        {params.instagram_connected === String(c.id) ? (
+                          <p className="mt-1 text-[11px] font-medium text-status-posted">
+                            Connected{params.instagram_username ? ` as @${params.instagram_username}` : ""}.
+                          </p>
+                        ) : null}
+                      </div>
+                      <form action="/api/channels/instagram/authorize" method="post">
+                        <input type="hidden" name="channel_id" value={c.id} />
+                        <button
+                          type="submit"
+                          className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink hover:bg-surface"
+                        >
+                          {c.has_access_token && c.remote_account_id ? "Reconnect Instagram" : "ربط Instagram"}
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                ) : null}
                 {oauthConnectPath(c.platform) ? (
                   <div className="mt-3 rounded-lg border border-border bg-surface-sunken/40 p-3">
                     <div className="flex items-center justify-between gap-3">
@@ -321,8 +374,13 @@ const WARN_WITHIN_DAYS = 14;
  * One line that answers "will this channel still post next month?". Rendered on the
  * server (the page is force-dynamic), so its clock cannot disagree with the client's.
  */
-function TokenStatus({ channel: c, nowMs }: { channel: Channel; nowMs: number }) {
-  if (!c.access_token) return <span className="text-status-failed">missing</span>;
+type ChannelDisplay = Omit<Channel, "access_token" | "refresh_token"> & {
+  has_access_token: boolean;
+  has_refresh_token: boolean;
+};
+
+function TokenStatus({ channel: c, nowMs }: { channel: ChannelDisplay; nowMs: number }) {
+  if (!c.has_access_token) return <span className="text-status-failed">missing</span>;
   if (!TOKEN_UPKEEP.has(c.platform)) {
     return <span className="text-status-posted">configured</span>;
   }

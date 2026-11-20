@@ -1,6 +1,7 @@
 import "server-only";
 import type DatabaseType from "better-sqlite3";
 import { getDb, nowIso } from "./db";
+import { encryptInstagramAccessToken } from "./token-crypto";
 import { isBlocked } from "./format";
 import { FINISHED_STATUSES_SQL } from "./queue-sections";
 import type {
@@ -79,6 +80,8 @@ export interface CreateChannelInput {
   timezone: string;
   remote_account_id?: string;
   linked_page_id?: string;
+  /** Instagram only: legacy keeps META_GRAPH_BASE behavior for pre-migration/manual channels. */
+  instagram_auth_method?: "legacy" | "facebook_login" | "instagram_login";
   access_token?: string;
   /** TikTok only: its access token expires in 24h and is refreshed by the worker, so the
    *  expiry and the refresh pair are stored at connect time rather than left null. */
@@ -94,10 +97,10 @@ export function createChannel(input: CreateChannelInput): number {
     .prepare(
       `INSERT INTO channels
         (platform, account_name, business_label, timezone, remote_account_id,
-         linked_page_id, access_token, token_expires_at, refresh_token,
+         linked_page_id, instagram_auth_method, access_token, token_expires_at, refresh_token,
          refresh_token_expires_at, requires_approval, color_hue)
        VALUES (@platform, @account_name, @business_label, @timezone, @remote_account_id,
-         @linked_page_id, @access_token, @token_expires_at, @refresh_token,
+         @linked_page_id, @instagram_auth_method, @access_token, @token_expires_at, @refresh_token,
          @refresh_token_expires_at, @requires_approval, @color_hue)`
     )
     .run({
@@ -107,6 +110,7 @@ export function createChannel(input: CreateChannelInput): number {
       timezone: input.timezone,
       remote_account_id: input.remote_account_id || null,
       linked_page_id: input.linked_page_id || null,
+      instagram_auth_method: input.platform === "instagram" ? (input.instagram_auth_method ?? "legacy") : "legacy",
       access_token: input.access_token || null,
       token_expires_at: input.token_expires_at ?? null,
       refresh_token: input.refresh_token ?? null,
@@ -155,6 +159,55 @@ export function upsertOAuthChannel(input: CreateChannelInput): {
   return { id: createChannel(input), created: true };
 }
 
+/**
+ * Atomically attach a verified Instagram Login credential to the selected existing
+ * channel. The duplicate check and update share one SQLite transaction, so two OAuth
+ * callbacks cannot race and attach the same Instagram account to different channel rows.
+ */
+export function connectInstagramChannel(input: {
+  channelId: number;
+  remoteAccountId: string;
+  accessToken: string;
+  tokenExpiresAt: string;
+  instagramAuthMethod: "instagram_login";
+}): "connected" | "channel_missing" | "already_linked" {
+  const db = getDb();
+  const tx = db.transaction(() => {
+    const target = db
+      .prepare("SELECT id FROM channels WHERE id = ? AND platform = 'instagram'")
+      .get(input.channelId) as { id: number } | undefined;
+    if (!target) return "channel_missing" as const;
+
+    const duplicate = db
+      .prepare(
+        "SELECT id FROM channels WHERE platform = 'instagram' AND remote_account_id = ? AND id <> ?",
+      )
+      .get(input.remoteAccountId, input.channelId) as { id: number } | undefined;
+    if (duplicate) return "already_linked" as const;
+
+    db.prepare(
+      `UPDATE channels
+          SET remote_account_id = @remoteAccountId,
+              access_token = @accessToken,
+              token_expires_at = @tokenExpiresAt,
+              instagram_auth_method = @instagramAuthMethod,
+              token_error = NULL,
+              token_next_check_at = NULL,
+              updated_at = @updatedAt
+        WHERE id = @channelId AND platform = 'instagram'`,
+    ).run({
+      ...input,
+      accessToken: encryptInstagramAccessToken(input.accessToken),
+      updatedAt: nowIso(),
+    });
+    return "connected" as const;
+  });
+  // Acquire SQLite's write lock before checking duplicate account ownership. Without
+  // IMMEDIATE, two concurrent OAuth callbacks can both read 'not linked' and one then
+  // fail with SQLITE_BUSY_SNAPSHOT while upgrading its deferred transaction.
+  return tx.immediate();
+}
+
 export function updateChannel(
   id: number,
   fields: Partial<{
@@ -165,6 +218,7 @@ export function updateChannel(
     // routing it through here would silently skip that. Enforced by the type.
     remote_account_id: string | null;
     linked_page_id: string | null;
+    instagram_auth_method: "legacy" | "facebook_login" | "instagram_login";
     access_token: string | null;
     // OAuth-managed credentials. Needed so RECONNECTING a channel refreshes it in place
     // instead of creating a duplicate — see upsertOAuthChannel below.

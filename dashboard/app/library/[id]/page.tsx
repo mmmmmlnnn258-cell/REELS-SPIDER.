@@ -48,7 +48,15 @@ export default async function EditPostPage({
         scheduledSendCounts={Object.fromEntries(
           assets.map((a) => [a.id, countScheduledSendsForAsset(a.id)])
         )}
-        channels={getChannels()}
+        channels={getChannels().map((c) => ({
+          id: c.id,
+          account_name: c.account_name,
+          platform: c.platform,
+          timezone: c.timezone,
+          requires_approval: c.requires_approval === 1,
+          color_hue: c.color_hue,
+          avatar_path: c.avatar_path,
+        }))}
         sends={getPostPublications(postId)}
         sendableChannels={getActiveChannels()}
         periods={listPeriods()}

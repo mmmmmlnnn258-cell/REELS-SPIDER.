@@ -6,7 +6,12 @@ import { isValidTimezone } from "@/lib/timezones";
 export const runtime = "nodejs";
 
 export function GET() {
-  return NextResponse.json({ channels: getChannels() });
+  const channels = getChannels().map(({ access_token, refresh_token, ...channel }) => ({
+    ...channel,
+    has_access_token: Boolean(access_token),
+    has_refresh_token: Boolean(refresh_token),
+  }));
+  return NextResponse.json({ channels });
 }
 
 export async function POST(req: NextRequest) {
@@ -48,6 +53,20 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
+  // Non-legacy Instagram auth methods require credentials verified by OAuth.
+  // New channels start as legacy; the Instagram callback is the only path that may
+  // atomically attach an Instagram Login token and switch the method.
+  if (
+    platform === "instagram" &&
+    body.instagram_auth_method !== undefined &&
+    body.instagram_auth_method !== "legacy"
+  ) {
+    return NextResponse.json(
+      { error: "Instagram login method can only be selected by completing Instagram OAuth." },
+      { status: 400 }
+    );
+  }
+  const instagram_auth_method = "legacy";
   const id = createChannel({
     platform,
     account_name,
@@ -55,6 +74,7 @@ export async function POST(req: NextRequest) {
     timezone,
     remote_account_id: body.remote_account_id,
     linked_page_id: body.linked_page_id,
+    instagram_auth_method,
     access_token: body.access_token,
     requires_approval: !!body.requires_approval,
     color_hue: body.color_hue ?? null,

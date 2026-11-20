@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from worker.media_sync import (
-    CallBudget, parse_meta_timestamp, run_media_sync, sync_channel_media,
+    CallBudget, _list_instagram, parse_meta_timestamp, run_media_sync, sync_channel_media,
 )
 
 NOW = datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc)
@@ -26,6 +26,7 @@ class FakeMediaClient:
         self.calls = 0
         self.last_usage_pct = usage_pct
         self.retry_after_seconds = retry_after
+        self.requested_fields = []
 
     def _serve(self, next_url):
         index = 0 if next_url is None else int(next_url)
@@ -35,6 +36,7 @@ class FakeMediaClient:
         return items, (str(index + 1) if has_more else None)
 
     def get_user_media(self, account_id, token, *, limit=100, fields=None, next_url=None):
+        self.requested_fields.append(fields)
         return self._serve(next_url)
 
     def get_threads_user_media(self, user_id, token, *, limit=100, fields=None, next_url=None):
@@ -73,10 +75,31 @@ def _rows(conn, channel_id):
 
 # -- timestamp normalisation ---------------------------------------------------------
 
+def test_instagram_login_media_sync_uses_only_supported_fields():
+    client = FakeMediaClient([[]])
+    client.base = "https://graph.instagram.com/v27.0"
+    client.INSTAGRAM_LOGIN_MEDIA_FIELDS = (
+        "id,media_type,permalink,thumbnail_url,media_url,timestamp,like_count,comments_count"
+    )
+    channel = {
+        "platform": "instagram",
+        "instagram_auth_method": "instagram_login",
+        "remote_account_id": "ig-user",
+        "access_token": "ig-token",
+    }
+
+    _list_instagram(client, channel, 50, None)
+
+    assert client.requested_fields == [client.INSTAGRAM_LOGIN_MEDIA_FIELDS]
+    assert "caption" not in client.requested_fields[0]
+    assert "media_product_type" not in client.requested_fields[0]
+
 @pytest.mark.parametrize("raw,expected_prefix", [
     ("2026-08-06T01:00:24+0000", "2026-08-06T01:00:24+00:00"),
     ("2026-08-06T01:00:24+00:00", "2026-08-06T01:00:24+00:00"),
 ])
+
+
 def test_meta_timestamps_normalise_to_colon_offsets(raw, expected_prefix):
     """Windows are filtered by STRING comparison in SQL, so a mixed offset format would
     produce quietly wrong date ranges rather than an error."""
@@ -383,8 +406,8 @@ def test_one_failing_channel_does_not_stop_the_others(conn, config):
         def get_threads_user_media(self, *a, **kw):
             raise RuntimeError("token expired for access_token=SECRET")
 
-    def client_for(platform):
-        return Boom([[]]) if platform == "threads" else FakeMediaClient([[_item("a")]])
+    def client_for(channel):
+        return Boom([[]]) if channel["platform"] == "threads" else FakeMediaClient([[_item("a")]])
 
     synced = run_media_sync(conn, config, now=NOW, client_for=client_for)
 

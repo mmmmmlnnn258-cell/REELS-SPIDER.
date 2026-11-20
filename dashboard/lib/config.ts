@@ -78,12 +78,9 @@ export const config = {
   // values and not one.
   graphVersion: get("META_GRAPH_VERSION", "v25.0"),
   threadsApiVersion: get("THREADS_API_VERSION", "v1.0"),
-  // Which Meta login path this install is on. worker/clients.py:46 resolves INSTAGRAM's
-  // host from this same var, so it decides what an Instagram token here even is:
-  //   graph.instagram.com  -> Instagram-Login: the token identifies the IG account itself
-  //   graph.facebook.com   -> Facebook-Login: the token is a FACEBOOK user token, and the
-  //                           IG id is reached via a Page, not via /me
-  // The default is graph.facebook.com (.env.example:71), so this cannot be assumed.
+  // Legacy fallback for Instagram channels created before per-channel login metadata.
+  // New channels with facebook_login or instagram_login use their fixed host in
+  // worker/clients.py; changing this value must not switch those channels.
   graphBase: get("META_GRAPH_BASE", "https://graph.facebook.com"),
   // The Meta app's own credentials, same vars as worker/config.py:241-242. Needed to
   // extend a short-lived token and to call debug_token. Server-side only — these are
@@ -103,6 +100,7 @@ export const config = {
     afternoon: get("TOD_AFTERNOON", "13:00"),
     evening: get("TOD_EVENING", "18:00"),
   },
+  tokenEncryptionKey: get("TOKEN_ENCRYPTION_KEY", ""),
 };
 
 // ---- Live safety-switch reads (DRY_RUN / KILL_SWITCH) -----------------------------
@@ -149,6 +147,54 @@ export function tiktokCredentials(): { clientKey: string; clientSecret: string }
     clientKey: process.env.TIKTOK_CLIENT_KEY ?? env.TIKTOK_CLIENT_KEY ?? "",
     clientSecret: process.env.TIKTOK_CLIENT_SECRET ?? env.TIKTOK_CLIENT_SECRET ?? "",
   };
+}
+
+/**
+ * Instagram Business Login credentials. The Instagram product uses its own app id
+ * and secret from Instagram Business Login settings, distinct from META_APP_ID /
+ * META_APP_SECRET.
+ *
+ * Read live for the same reason as TikTok: the OAuth flow must use current credentials
+ * from the server environment/root .env, never values supplied by the browser.
+ */
+export function instagramCredentials(): { clientId: string; clientSecret: string } {
+  const env = liveEnv();
+  return {
+    // Instagram Business Login has its own client id/secret pair under the
+    // Instagram product settings; never substitute the general Meta App credentials.
+    clientId: process.env.INSTAGRAM_APP_ID ?? env.INSTAGRAM_APP_ID ?? "",
+    clientSecret: process.env.INSTAGRAM_APP_SECRET ?? env.INSTAGRAM_APP_SECRET ?? "",
+  };
+}
+
+/**
+ * The exact public OAuth callback registered with Meta. Never derive this from
+ * request Host / forwarded-host headers: those are request-controlled in some
+ * proxy configurations and must not influence an OAuth redirect_uri.
+ */
+export function instagramRedirectUri(): string {
+  const env = liveEnv();
+  const raw = process.env.INSTAGRAM_REDIRECT_URI ?? env.INSTAGRAM_REDIRECT_URI ?? "";
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    const localHttp =
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1");
+    if (
+      (url.protocol !== "https:" && !localHttp) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      url.pathname !== "/api/channels/instagram/callback"
+    ) {
+      return "";
+    }
+    return url.toString();
+  } catch {
+    return "";
+  }
 }
 
 // Same semantics as worker/config.py's _as_bool: an explicit allow-list ("1", "true",

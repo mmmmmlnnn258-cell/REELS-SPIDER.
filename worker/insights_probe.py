@@ -119,7 +119,19 @@ def probe_instagram(client, ch, result: ProbeResult, print_fn) -> None:
     account_id, token = ch["remote_account_id"], ch["access_token"]
 
     print_fn("  media list:")
-    ok, value = _try("media", lambda: client.get_user_media(account_id, token, limit=1), print_fn)
+    auth_keys = ch.keys() if hasattr(ch, "keys") else ()
+    auth_method = ch["instagram_auth_method"] if "instagram_auth_method" in auth_keys else "legacy"
+    instagram_login = auth_method == "instagram_login" or (
+        auth_method == "legacy" and "graph.instagram.com" in getattr(client, "base", "")
+    )
+    media_kwargs = {"limit": 1}
+    if instagram_login:
+        media_kwargs["fields"] = client.INSTAGRAM_LOGIN_MEDIA_FIELDS
+    ok, value = _try(
+        "media",
+        lambda: client.get_user_media(account_id, token, **media_kwargs),
+        print_fn,
+    )
     if ok:
         items, next_url = value
         result.media_ok = True
@@ -357,7 +369,7 @@ def probe_channels(rows, registry: ClientRegistry, *, print_fn=print) -> list[Pr
             print_fn(f"  · platform '{ch['platform']}' has no account-insights endpoint — skipped")
             continue
         try:
-            probe(registry.for_platform(ch["platform"]), ch, result, print_fn)
+            probe(registry.for_platform(ch), ch, result, print_fn)
         except Exception as exc:  # noqa: BLE001
             result.fatal = redact(str(exc))
             print_fn(f"  ✗ probe aborted: {_short(result.fatal)}")

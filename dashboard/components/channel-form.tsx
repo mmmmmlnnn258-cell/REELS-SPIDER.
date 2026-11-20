@@ -58,6 +58,8 @@ export function ChannelForm({
   // TikTok's channel row is created by the OAuth callback, not by this form's Save — it
   // is the only platform whose credential cannot be typed in at all.
   const isTikTok = form.platform === "tiktok";
+  // Instagram channels are created empty, then connected from their own card through Business Login OAuth.
+  const isInstagram = form.platform === "instagram";
   // Facebook has its own Connect panel: unlike the other platforms, its id and its
   // credential are produced by the same exchange, and the token that finds the Page (a
   // short-lived USER token) is NOT the token the channel stores (a permanent PAGE token).
@@ -179,7 +181,7 @@ export function ChannelForm({
             }
           />
         ) : null}
-        {isTikTok ? null : usesAccountId(form.platform) ? (
+        {isTikTok || isInstagram ? null : usesAccountId(form.platform) ? (
           <div>
             <label className={label}>
               {accountIdLabel(form.platform)}
@@ -211,7 +213,7 @@ export function ChannelForm({
             ) : null}
           </div>
         ) : null}
-        {usesLinkedPage(form.platform) ? (
+        {usesLinkedPage(form.platform) && !isInstagram ? (
           <div>
             <label className={label}>Linked Facebook Page id (optional)</label>
             <input
@@ -222,11 +224,16 @@ export function ChannelForm({
             />
           </div>
         ) : null}
-        {/* TikTok is the only platform whose credential is never typed in. Its access
-            token lives 24 hours, so anything pasted here would be dead by tomorrow —
-            the account is connected through OAuth instead, and the worker refreshes it.
-            Leaving the token box on screen would invite exactly the wrong thing. */}
-        {isTikTok ? (
+        {/* OAuth-managed platforms do not ask the owner to paste credentials. */}
+        {isInstagram ? (
+          <div className="sm:col-span-2 rounded-lg border border-border bg-surface-muted p-4">
+            <p className="text-sm text-ink-soft">
+              لا تحتاج إلى إدخال رقم الحساب أو رمز وصول. أنشئ القناة أولاً، ثم اضغط
+              «ربط Instagram» على بطاقتها لإتمام الربط الرسمي. يدعم الربط حسابات
+              Instagram الاحترافية (Business أو Creator).
+            </p>
+          </div>
+        ) : isTikTok ? (
           <div className="sm:col-span-2 rounded-lg border border-border bg-surface-muted p-4">
             <p className="mb-3 text-sm text-ink-soft">
               TikTok connects through your browser — there is no token to paste. Its access
@@ -249,7 +256,8 @@ export function ChannelForm({
             </p>
           </div>
         ) : null}
-        <div className={isTikTok ? "hidden" : "sm:col-span-2"}>
+        {!isInstagram && !isTikTok ? (
+        <div className="sm:col-span-2">
           <label className={label}>
             {usesAccountId(form.platform) ? "Access token" : "Webhook URL"}
           </label>
@@ -265,6 +273,7 @@ export function ChannelForm({
             onChange={(e) => set("access_token", e.target.value)}
           />
         </div>
+        ) : null}
         <label className="flex items-center gap-2 text-sm text-ink-soft sm:col-span-2">
           <input
             type="checkbox"

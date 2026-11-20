@@ -267,8 +267,8 @@ def test_discord_metrics_are_skipped_but_other_publications_still_process(
     ).lastrowid
     conn.commit()
 
-    def client_for(platform):
-        return fake_client if platform == "instagram" else fake_discord_client
+    def client_for(channel):
+        return fake_client if channel["platform"] == "instagram" else fake_discord_client
 
     fetched = run_metrics(conn, config, fake_client, NOW, client_for=client_for)
 
@@ -527,8 +527,8 @@ def test_telegram_metrics_are_skipped_but_other_publications_still_process(
     ).lastrowid
     conn.commit()
 
-    def client_for(platform):
-        return fake_client if platform == "instagram" else fake_telegram_client
+    def client_for(channel):
+        return fake_client if channel["platform"] == "instagram" else fake_telegram_client
 
     fetched = run_metrics(conn, config, fake_client, NOW, client_for=client_for)
 

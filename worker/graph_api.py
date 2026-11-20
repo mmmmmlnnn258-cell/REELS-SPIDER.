@@ -502,9 +502,15 @@ class GraphClient:
 
     # Fields requested for each post in the account's media list. media_product_type
     # distinguishes FEED / REELS / STORY, which media_type alone does not.
+    # Facebook Login exposes caption and media_product_type on IG Media; Meta marks
+    # both as Facebook-Login-only. Instagram Login must request the common field set.
     MEDIA_FIELDS = (
         "id,media_type,media_product_type,permalink,caption,"
         "thumbnail_url,media_url,timestamp,like_count,comments_count"
+    )
+    INSTAGRAM_LOGIN_MEDIA_FIELDS = (
+        "id,media_type,permalink,thumbnail_url,media_url,timestamp,"
+        "like_count,comments_count"
     )
 
     def get_user_media(

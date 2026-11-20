@@ -1,7 +1,8 @@
-# Meta setup & first live post
+# Meta setup & safe Instagram connection
 
-A step-by-step to connect your **own** Instagram professional account and publish one
-real post — staying in **Development mode**, no App Review, no paid tools.
+A step-by-step to connect an Instagram professional account through official OAuth and
+verify the connection without publishing content or sending messages. Keep production
+safety switches unchanged until a separate, explicitly approved live test.
 
 > Looking for **Discord** or **Telegram** instead? Those aren't part of Meta at all —
 > see **`docs/other-platforms-setup.md`**, a much shorter setup with no public URL or
@@ -10,6 +11,23 @@ real post — staying in **Development mode**, no App Review, no paid tools.
 > Verified against Meta docs on 2026-07-22 (API v25.0). Meta iterates the dashboard
 > wording, so exact button labels may differ slightly; the panel locations are stable.
 > Items marked ⚠ couldn't be pinned to a single authoritative page.
+
+## Before deploying the protected dashboard
+
+This version adds owner-only dashboard login. **Set these three server variables before
+deploying it**, or the dashboard will show the setup warning and block access until they
+are configured:
+
+```
+DASHBOARD_USERNAME=choose-a-private-owner-login
+DASHBOARD_PASSWORD=use-a-unique-strong-password
+DASHBOARD_SESSION_SECRET=generate-at-least-32-random-characters
+```
+
+Keep the username and password private. Generate a random session secret (for example,
+`openssl rand -hex 32`) and store all three values in Railway's Variables/secret settings,
+not in GitHub or this document. The session secret must remain stable between restarts and
+must be at least 32 characters; changing it signs out existing sessions.
 
 ## What you need first
 - An Instagram **professional** account (Business or Creator). Personal accounts can't publish via API.
@@ -22,128 +40,93 @@ real post — staying in **Development mode**, no App Review, no paid tools.
 2. The dashboard is now **use-case based**. Choose **"Manage messaging and content on Instagram."**
    (If you don't see it: **Other → Business** also works, but the Instagram use case is the intended path.)
 3. Name the app, confirm your email, create. It starts in **Development mode** — leave it there.
-4. Copy the **App ID** and **App Secret** (App Settings → Basic) into your `.env`:
-   ```
-   META_APP_ID=...
-   META_APP_SECRET=...
-   ```
+4. Keep the general **App ID** and **App Secret** (App Settings → Basic) as
+   `META_APP_ID` and `META_APP_SECRET`. These are for the Facebook Login / Page
+   integration; they are NOT the Instagram Business Login client credentials.
 
-## Step 2 — Use the Instagram-Login path (simplest — no Facebook Page)
+## Step 2 — Configure Instagram Business Login (no manual token entry)
 1. App Dashboard → **Products** → **Instagram** → **Set up**.
-2. Open **"API setup with Instagram login"** (NOT the Facebook-login one).
-3. Under **Generate access tokens**, click **Add account** → log in with your IG
-   Creator/Business account and authorize.
-4. Click **Generate token** next to the account. Approve the dialog. **Copy the token now —
-   it isn't shown again.** (This first token is short-lived, ~1 hour — see Step 3.)
-5. The same panel shows your **Instagram user id** (a long number). Note it.
-   - **Or skip it entirely.** In the dashboard, **Channels → Add channel** → pick
-     Instagram, paste the token into **Access token**, then click **"Don't know it? Look
-     it up from your access token"** under the id field. The dashboard asks Meta who the
-     token belongs to and fills the id in for you. It shows the username too, which is the
-     part worth checking — that one line confirms both the token and the id at once.
-   - You don't need to add yourself as an "Instagram Tester" for your *own* account — the
-     Add-account/Generate-token step is the authorization. ⚠ (Strongly implied by Meta's
-     flow; not stated verbatim on one page.)
-
-Then point the worker at the Instagram-Login host — add to `.env`:
-```
-META_GRAPH_BASE=https://graph.instagram.com
-```
-
-## Step 3 — Turn the short-lived token into a 60-day token
-**The Step 2 token expires in about an hour.** Nothing warns you — the channel will look
-connected and work all afternoon, then stop. Run this from the repo root:
-
-```
-.venv/bin/python -m worker.exchange_token
-```
-
-Choose **Instagram**, paste the Step 2 token when asked, and it does the rest: exchanges
-for the 60-day token, confirms which account it belongs to, and offers to save it straight
-onto a channel. Your pasted token stays hidden — it never appears on screen or in your
-shell history — and it uses the app id/secret already in `.env`, so no secret goes in a URL.
-
-If no Instagram channel exists yet, it prints your **IG user id** and tells you to add the
-channel first (Step 4), then re-run to store the token.
-
-> **This token still expires — in 60 days.** Re-run the same command before then, pasting
-> the current token (it must be at least 24 hours old to refresh). `--check`, below, tells
-> you where you stand.
-
-<details><summary>Doing it by hand instead</summary>
-
-```
-curl -s "https://graph.instagram.com/access_token\
-?grant_type=ig_exchange_token\
-&client_secret=YOUR_APP_SECRET\
-&access_token=SHORT_LIVED_TOKEN"
-```
-The returned `access_token` is valid 60 days; refresh with `ig_refresh_token`
-(see reference.md). Paste it into the dashboard yourself.
-</details>
-
-## Step 4 — Add the channel in the dashboard
-1. Start the dashboard: `cd dashboard && npm run dev` → open the printed URL.
-2. **Channels → Add channel**:
-   - Platform: **Instagram**
-   - Account name: e.g. `Liparoto`
-   - Timezone: e.g. `America/New_York`
-   - **IG user id**: from Step 2
-   - **Access token**: the 60-day token from Step 3
-3. Save.
-
-## Step 5 — Preflight (verify the token WITHOUT posting)
-From the repo root, with the venv active:
-```
-source .venv/bin/activate
-python -m worker.preflight
-```
-A `✓ token OK — published N/M ...` line means auth + IG user id are valid and content
-publishing is reachable. This posts **nothing** — it only reads your quota. Fix any `✗`
-before continuing.
-
-## Step 6 — Host one test image at a public URL
-Meta fetches the image from a public URL, so it must return **raw JPEG bytes** (not an HTML
-page). **JPEG only** for image posts.
-- Easiest free option: **GitHub raw** — commit a `test.jpg` to any repo and use the
-  `https://raw.githubusercontent.com/USER/REPO/main/test.jpg` URL (NOT the `/blob/` page URL).
-- Also fine: an S3/Cloudflare R2 public object (set content-type `image/jpeg`), or a free
-  cloudflared/ngrok tunnel exposing a local file server that sends `Content-Type: image/jpeg`.
-- **Won't work:** Google Drive / Dropbox *share* links (they return HTML).
-
-Verify it:
-```
-curl -sI "https://your-url/test.jpg"   # expect: 200 and content-type: image/jpeg
-```
-
-Set the base URL your uploaded assets will use (only needed for real posting):
-```
-PUBLIC_ASSET_BASE_URL=https://your-public-host
-```
-For a very first smoke test you can skip the dashboard upload and point a post's asset
-straight at a known-public JPEG — ask me and I'll wire that quickly.
-
-## Step 7 — Publish ONE real post
-1. In `.env`, flip the safety switch: `DRY_RUN=0` (keep `KILL_SWITCH=0`).
-2. In the dashboard, **Compose** a post to that channel and schedule it for a minute in the
-   **past** (so it's due now).
-3. Run one worker cycle:
+2. Open **API setup with Instagram login** (not the Facebook Login setup).
+3. In **Business login settings**, copy the Instagram-specific **Instagram App ID**
+   and **Instagram App Secret** into the server environment:
    ```
-   python -m worker.run --once
+   INSTAGRAM_APP_ID=...
+   INSTAGRAM_APP_SECRET=...
+   INSTAGRAM_REDIRECT_URI=https://your-domain.example/api/channels/instagram/callback
+   TOKEN_ENCRYPTION_KEY=...
    ```
-4. Check Instagram — the post should appear. In the dashboard Overview it flips to
-   **Posted** with a real `remote_post_id` (not `DRYRUN`).
+   Register that exact HTTPS callback URL in the same Instagram Business Login settings.
+   Do not substitute `META_APP_ID` or `META_APP_SECRET`: they are a separate credential pair.
+4. Generate `TOKEN_ENCRYPTION_KEY` as canonical Base64 for exactly 32 random bytes:
+   ```sh
+   python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
+   ```
+   Keep it secret, back it up securely, and use the identical value for dashboard and worker.
+   Losing or changing it without re-encrypting stored tokens makes connected Instagram
+   credentials unreadable.
+5. Keep the app in **Development mode** while testing your own account. Add the Instagram
+   account as a tester/role if Meta's dashboard requires it for your app's current setup.
+   The account must be **Business or Creator**; ordinary personal accounts are not supported.
 
-If it fails, the publication shows **Failed** with the exact Graph API error — fix and hit
-**Retry**. Nothing is silent.
+## Step 3 — Connect the existing channel with OAuth
+1. In SocialScheduler → **Channels**, create an Instagram channel if you do not already
+   have one. Creating the channel does not require an account ID or access token.
+2. On the exact Instagram channel card you want to connect, press **ربط Instagram**.
+3. Sign in directly with Instagram and approve the requested permissions:
+   `instagram_business_basic`, `instagram_business_content_publish`,
+   and `instagram_business_manage_comments`, `instagram_business_manage_messages`.
+4. Meta returns to the registered callback. The server exchanges the code, obtains a
+   long-lived token, verifies the account identity, encrypts the token, and updates only
+   the selected channel. It refuses to link the same Instagram account to a second channel.
+5. Confirm the success message shows the expected Instagram username and channel number.
+   The access token remains server-side; do not paste it into chat, GitHub, or the dashboard.
+6. The worker automatically selects `graph.instagram.com` for this Instagram Login
+   channel. Leave `META_GRAPH_BASE` unchanged; it remains the fallback for legacy channels.
+
+If OAuth fails, read the reason shown on the Channels page. Common causes are a callback URL
+that does not exactly match Meta's registered URL, missing Instagram app credentials, a
+missing encryption key, an account that is not Business/Creator, or permissions that were
+not granted. A failed connection does not overwrite the channel's existing credentials.
+
+## Step 4 — Verify the connection without side effects
+Keep `DRY_RUN=1` and `KILL_SWITCH=0`. Check the channel card and system status to confirm
+the expected Instagram username is connected to the selected channel. Confirm that the
+channel's account ID is populated and that no duplicate channel was created.
+
+If a read-only worker preflight is available in your deployment, it may be used to verify
+authentication and account access. Do not use a publish command, send a test DM, or trigger
+comment automation as part of this connection check.
+
+## Step 5 — Live actions require separate explicit approval
+This guide intentionally stops after connection verification. It does not authorize a real
+post, comment reply, private message, or any change to production safety switches. Keep
+`DRY_RUN=1` and `KILL_SWITCH=0`. Before any live test, review the destination account,
+content, permissions, queue, and rollback plan, and obtain explicit approval from the
+account owner. Do not schedule a post in the past as a substitute for a controlled test.
 
 ---
 
-## After the first success
-- Put `DRY_RUN` back to `1` for day-to-day safety until you're ready to run for real.
-- Metrics for the post will populate within a few worker cycles (reach/saves/likes appear on
-  the Overview row).
-- `KILL_SWITCH=1` halts the worker instantly at any time.
+## Before onboarding paying customers
+
+The Development-mode setup above is for the app owner and people who have an eligible role on the Meta app. It is **not** a public customer rollout.
+
+Before allowing unrelated customers to connect their own Instagram accounts:
+
+1. Complete Meta App Review and obtain **Advanced Access** for every permission the product actually uses, including the four documented Instagram Login scopes: `instagram_business_basic`,
+   `instagram_business_content_publish`, `instagram_business_manage_comments`, and
+   `instagram_business_manage_messages`. Standard Access is limited to people with a role on the app; Advanced Access is required for ordinary users.
+2. If the app was created or claimed by a business, check Meta's **Tech Provider verification** requirement. Meta states that business-created/claimed apps cannot receive certain business permissions from users outside the app's roles unless the owning business is verified as a Tech Provider. This verification is separate from App Review; both may be required.
+3. Complete any business verification and data-handling requirements Meta presents, then test OAuth with a non-role customer account before announcing availability.
+4. Keep each customer's Instagram account connected only to their own authorized workspace/channel. Do not share access tokens between customers.
+
+These are Meta platform approval requirements, not steps that a code change or a successful CI run can bypass. Approval is controlled by Meta and is not guaranteed.
+
+Official Meta references:
+- [App Review and Advanced Access](https://developers.facebook.com/docs/resp-plat-initiatives/app-review/introduction)
+- [Tech Provider verification](https://developers.facebook.com/docs/development/release/tech-providers/)
+- [Data handling and access levels FAQ](https://developers.facebook.com/docs/resp-plat-initiatives/individual-processes/data-handling-questions/faqs/)
+
+---
 
 ## Notes / gotchas
 - Media containers **expire after 24h** — the worker publishes promptly, so this only matters
@@ -186,9 +169,21 @@ Two things that will *not* tell you a token is broken, so don't rely on them: `p
 passes on a read-only token (reads work, publishing doesn't), and the dashboard shows the
 channel as connected either way.
 
-Instagram is the exception — Meta's `debug_token` refuses Instagram-Login tokens
-(`(#2) Service temporarily unavailable`), so `--check` proves reachability instead and
-cannot report the expiry. **Track the 60-day window yourself.**
+Instagram Login is the exception — Meta's `debug_token` refuses Instagram-Login tokens
+(`(#2) Service temporarily unavailable`), so `--check` is read-only: it proves the token can
+reach `/me` and reports the username, but it cannot report the expiry or renew the token.
+
+For channels connected with the dashboard's **Connect Instagram** OAuth button
+(`instagram_auth_method=instagram_login`), the worker handles renewal automatically. It
+checks each active channel every 12 hours and attempts a refresh when the stored expiry is
+unknown or within 14 days. A token less than 24 hours old cannot yet be refreshed; the
+worker verifies that it still works and tries again on a later cycle. A successful refresh
+stores the replacement token and its new expiry. If Meta says the token is expired/revoked
+or renewal cannot be recovered, reconnect that channel from **Channels → Connect Instagram**.
+
+The interactive `worker.exchange_token` helper is a separate manual/legacy token workflow;
+its reminder to refresh a pasted token before 60 days does not describe OAuth-managed
+channels. Do not use `--check` as a renewal command — it never changes stored credentials.
 
 ---
 
@@ -394,3 +389,25 @@ selected, those channels get deselected automatically, because they can't publis
 and if a text post ever did reach the worker aimed at one of them anyway, the worker itself
 would refuse it outright (a clear, permanent failure, not a retry) rather than silently
 dropping the text or guessing at an image.
+
+
+## Instagram Login token encryption
+
+Instagram Login access tokens are stored in SQLite as versioned AES-256-GCM envelopes.
+The dashboard encrypts the token when OAuth completes; the Python worker decrypts it
+inside its SQLite row boundary and encrypts any renewed token before writing it back.
+Existing plaintext legacy/Facebook Login/TikTok credentials are left unchanged.
+
+Set `TOKEN_ENCRYPTION_KEY` in the shared runtime environment before completing the
+first Instagram Login connection. It must be canonical Base64 encoding of exactly 32
+random bytes. Generate one with:
+
+```sh
+python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
+```
+
+Use the SAME key for the dashboard and worker and every replica sharing the database.
+Do not commit the key or put it in client-visible settings. Keep a secure backup: losing
+or changing it without re-encrypting the stored tokens makes those Instagram Login
+connections unreadable. Missing or incorrect keys and tampered ciphertext fail closed;
+legacy plaintext tokens remain readable.

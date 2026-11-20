@@ -38,7 +38,7 @@ export function BulkImport({
   timeOfDayTags,
   topicTags,
 }: {
-  channels: Channel[];
+  channels: Omit<Channel, "access_token" | "refresh_token">[];
   periods: Period[];
   timeOfDayTags: Tag[];
   topicTags: Tag[];

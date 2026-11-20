@@ -299,12 +299,13 @@ def test_metrics_pick_the_client_for_each_channels_platform(
     _posted_fb_pub(conn, make_publication, now)
     seen = []
 
-    def client_for(platform):
-        seen.append(platform)
+    def client_for(channel):
+        seen.append(channel)
         return fake_client
 
     assert run_metrics(conn, config, fake_client, now, client_for=client_for) == 1
-    assert seen == ["facebook"]
+    assert len(seen) == 1
+    assert seen[0]["platform"] == "facebook"
 
 
 # ---- Stories -----------------------------------------------------------------------

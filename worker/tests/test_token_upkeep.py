@@ -188,6 +188,37 @@ def test_instagram_unknown_expiry_renews_to_learn_the_date(conn, ig_login_config
     assert params["grant_type"] == "ig_refresh_token"
 
 
+def test_explicit_instagram_login_refresh_ignores_global_graph_base(conn, config, monkeypatch):
+    import base64
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", base64.b64encode(bytes(range(32))).decode())
+    cfg = dataclasses.replace(config, graph_base="https://graph.facebook.com")
+    cur = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, timezone, remote_account_id, access_token,
+            instagram_auth_method)
+           VALUES ('instagram','IG Login','UTC','ig-456','IGA_OLD','instagram_login')"""
+    )
+    conn.commit()
+    channel = db.get_channel(conn, cur.lastrowid)
+    session = FakeSession({"refresh_access_token": RENEWED})
+
+    assert check_channel(conn, cfg, channel, NOW, session=session) == "renewed"
+    assert session.calls[0][0] == "https://graph.instagram.com/refresh_access_token"
+
+    # A rotated token must remain encrypted at rest, not just the initial OAuth token.
+    import sqlite3
+    raw_conn = sqlite3.connect(conn.execute("PRAGMA database_list").fetchone()[2])
+    try:
+        raw = raw_conn.execute(
+            "SELECT access_token FROM channels WHERE id = ?", (channel["id"],)
+        ).fetchone()[0]
+    finally:
+        raw_conn.close()
+    from worker.token_crypto import decrypt_token, is_encrypted
+    assert is_encrypted(raw)
+    assert decrypt_token(raw) == NEW
+
+
 def test_instagram_with_weeks_left_makes_no_call(conn, ig_login_config):
     ch = _channel(conn, platform="instagram", token="IGA_OLD",
                   expires_at=(NOW + timedelta(days=40)).isoformat())
@@ -216,6 +247,7 @@ def test_instagram_dead_token_is_flagged(conn, ig_login_config):
     session = FakeSession({"refresh_access_token": dead, "me": dead})
     assert check_channel(conn, ig_login_config, ch, NOW, session=session) == "error"
     assert "no longer valid" in db.get_channel(conn, ch["id"])["token_error"]
+    assert "Connect Instagram" in db.get_channel(conn, ch["id"])["token_error"]
 
 
 def test_instagram_known_close_expiry_and_failed_renewal_is_flagged(conn, ig_login_config):
@@ -227,6 +259,26 @@ def test_instagram_known_close_expiry_and_failed_renewal_is_flagged(conn, ig_log
     row = db.get_channel(conn, ch["id"])
     assert row["access_token"] == "IGA_OLD"
     assert "Automatic renewal failed" in row["token_error"]
+
+
+
+def test_instagram_facebook_login_channel_uses_facebook_debug_host(conn, config):
+    cfg = dataclasses.replace(config, graph_base="https://graph.instagram.com",
+                              meta_app_id="app", meta_app_secret="secret")
+    cur = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, timezone, remote_account_id, access_token,
+            instagram_auth_method)
+           VALUES ('instagram','IG via Facebook Login','UTC','ig-123','PAGE_TOKEN',
+                   'facebook_login')"""
+    )
+    conn.commit()
+    channel = db.get_channel(conn, cur.lastrowid)
+    session = FakeSession({"debug_token": _debug(None)})
+
+    assert check_channel(conn, cfg, channel, NOW, session=session) == "ok"
+    assert session.calls[0][0].startswith("https://graph.facebook.com/")
+    assert "refresh_access_token" not in session.calls[0][0]
 
 
 # -- Facebook (check only) -------------------------------------------------------------
