@@ -231,6 +231,7 @@ class Config:
     # Telegram video intake is opt-in and fail-closed. The allow-list is mandatory.
     telegram_bot_token: str = ""
     telegram_allowed_chat_ids: str = ""
+    telegram_dashboard_url: str = ""
     telegram_default_instagram_channel_id: int | None = None
     telegram_poll_timeout: int = 20
     # Telegram's hosted Bot API currently limits bot downloads to 20 MB.
@@ -327,6 +328,7 @@ class Config:
             tod_evening=os.environ.get("TOD_EVENING", "18:00"),
             telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
             telegram_allowed_chat_ids=os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", ""),
+            telegram_dashboard_url=os.environ.get("DASHBOARD_PUBLIC_URL", "").strip(),
             telegram_default_instagram_channel_id=(
                 int(os.environ["TELEGRAM_DEFAULT_INSTAGRAM_CHANNEL_ID"])
                 if os.environ.get("TELEGRAM_DEFAULT_INSTAGRAM_CHANNEL_ID", "").strip()
