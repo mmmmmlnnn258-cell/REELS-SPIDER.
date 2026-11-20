@@ -113,8 +113,9 @@ The Development-mode setup above is for the app owner and people who have an eli
 
 Before allowing unrelated customers to connect their own Instagram accounts:
 
-1. Complete Meta App Review and obtain **Advanced Access** for every permission the product actually uses, including `instagram_business_basic`, `instagram_business_content_publish`, and
-   `instagram_business_manage_insights` for the analytics features. Standard Access is limited to people with a role on the app; Advanced Access is required for ordinary users.
+1. Complete Meta App Review and obtain **Advanced Access** for every permission the product actually uses, including all five scopes requested by this build: `instagram_business_basic`,
+   `instagram_business_content_publish`, `instagram_business_manage_comments`,
+   `instagram_business_manage_messages`, and `instagram_business_manage_insights` for analytics. Standard Access is limited to people with a role on the app; Advanced Access is required for ordinary users.
 2. If the app was created or claimed by a business, check Meta's **Tech Provider verification** requirement. Meta states that business-created/claimed apps cannot receive certain business permissions from users outside the app's roles unless the owning business is verified as a Tech Provider. This verification is separate from App Review; both may be required.
 3. Complete any business verification and data-handling requirements Meta presents, then test OAuth with a non-role customer account before announcing availability.
 4. Keep each customer's Instagram account connected only to their own authorized workspace/channel. Do not share access tokens between customers.
