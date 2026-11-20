@@ -1,12 +1,13 @@
 """Versioned AES-256-GCM encryption for Instagram Login access tokens.
 
-The envelope and AAD are shared with dashboard/lib/token-crypto.ts.
-Legacy plaintext values are returned unchanged; malformed encrypted values fail closed.
+Envelope/AAD are shared with dashboard/lib/token-crypto.ts. Legacy plaintext remains
+readable; encrypted values fail closed on missing keys, tampering, or malformed data.
 """
 from __future__ import annotations
 
 import base64
 import os
+import secrets
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -33,10 +34,8 @@ def encrypt_token(value: str | None, key: str | None = None) -> str | None:
     if value is None or value == "":
         return value
     if is_encrypted(value):
-        # Validate existing envelopes rather than accidentally nesting ciphertext.
         decrypt_token(value, key)
         return value
-    import secrets
     nonce = secrets.token_bytes(12)
     sealed = AESGCM(_key(key)).encrypt(nonce, value.encode("utf-8"), _AAD)
     return _PREFIX + base64.b64encode(nonce).decode("ascii") + ":" + base64.b64encode(sealed).decode("ascii")
@@ -46,11 +45,11 @@ def decrypt_token(value: str | None, key: str | None = None) -> str | None:
     if value is None or value == "" or not is_encrypted(value):
         return value
     parts = value.split(":")
-    if len(parts) != 5 or parts[:2] != ["enc", "v1"]:
+    if len(parts) != 4 or parts[:2] != ["enc", "v1"]:
         raise RuntimeError("Unsupported encrypted token envelope")
     try:
         nonce = base64.b64decode(parts[2], validate=True)
-        sealed = base64.b64decode(parts[3] + (":" + parts[4] if len(parts) > 4 else ""), validate=True)
+        sealed = base64.b64decode(parts[3], validate=True)
     except Exception as exc:
         raise RuntimeError("Malformed encrypted token envelope") from exc
     if len(nonce) != 12 or len(sealed) < 16:
