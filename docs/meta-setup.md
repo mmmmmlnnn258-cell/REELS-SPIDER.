@@ -1,7 +1,8 @@
-# Meta setup & first live post
+# Meta setup & safe Instagram connection
 
-A step-by-step to connect your **own** Instagram professional account and publish one
-real post — staying in **Development mode**, no App Review, no paid tools.
+A step-by-step to connect an Instagram professional account through official OAuth and
+verify the connection without publishing content or sending messages. Keep production
+safety switches unchanged until a separate, explicitly approved live test.
 
 > Looking for **Discord** or **Telegram** instead? Those aren't part of Meta at all —
 > see **`docs/other-platforms-setup.md`**, a much shorter setup with no public URL or
@@ -70,64 +71,23 @@ that does not exactly match Meta's registered URL, missing Instagram app credent
 missing encryption key, an account that is not Business/Creator, or permissions that were
 not granted. A failed connection does not overwrite the channel's existing credentials.
 
-## Step 4 — Verify safely before publishing
+## Step 4 — Verify the connection without side effects
 Keep `DRY_RUN=1` and `KILL_SWITCH=0`. Check the channel card and system status to confirm
-the account is connected. Run the worker preflight if available; it performs read-only
-checks and does not publish content. Do not change `DRY_RUN` to `0` until you explicitly
-intend to test a real post and have reviewed the content and destination.
+the expected Instagram username is connected to the selected channel. Confirm that the
+channel's account ID is populated and that no duplicate channel was created.
 
-## Step 5 — Preflight (verify the token WITHOUT posting)
-From the repo root, with the venv active:
-```
-source .venv/bin/activate
-python -m worker.preflight
-```
-A `✓ token OK — published N/M ...` line means auth + IG user id are valid and content
-publishing is reachable. This posts **nothing** — it only reads your quota. Fix any `✗`
-before continuing.
+If a read-only worker preflight is available in your deployment, it may be used to verify
+authentication and account access. Do not use a publish command, send a test DM, or trigger
+comment automation as part of this connection check.
 
-## Step 6 — Host one test image at a public URL
-Meta fetches the image from a public URL, so it must return **raw JPEG bytes** (not an HTML
-page). **JPEG only** for image posts.
-- Easiest free option: **GitHub raw** — commit a `test.jpg` to any repo and use the
-  `https://raw.githubusercontent.com/USER/REPO/main/test.jpg` URL (NOT the `/blob/` page URL).
-- Also fine: an S3/Cloudflare R2 public object (set content-type `image/jpeg`), or a free
-  cloudflared/ngrok tunnel exposing a local file server that sends `Content-Type: image/jpeg`.
-- **Won't work:** Google Drive / Dropbox *share* links (they return HTML).
-
-Verify it:
-```
-curl -sI "https://your-url/test.jpg"   # expect: 200 and content-type: image/jpeg
-```
-
-Set the base URL your uploaded assets will use (only needed for real posting):
-```
-PUBLIC_ASSET_BASE_URL=https://your-public-host
-```
-For a very first smoke test you can skip the dashboard upload and point a post's asset
-straight at a known-public JPEG — ask me and I'll wire that quickly.
-
-## Step 7 — Publish ONE real post
-1. In `.env`, flip the safety switch: `DRY_RUN=0` (keep `KILL_SWITCH=0`).
-2. In the dashboard, **Compose** a post to that channel and schedule it for a minute in the
-   **past** (so it's due now).
-3. Run one worker cycle:
-   ```
-   python -m worker.run --once
-   ```
-4. Check Instagram — the post should appear. In the dashboard Overview it flips to
-   **Posted** with a real `remote_post_id` (not `DRYRUN`).
-
-If it fails, the publication shows **Failed** with the exact Graph API error — fix and hit
-**Retry**. Nothing is silent.
+## Step 5 — Live actions require separate explicit approval
+This guide intentionally stops after connection verification. It does not authorize a real
+post, comment reply, private message, or any change to production safety switches. Keep
+`DRY_RUN=1` and `KILL_SWITCH=0`. Before any live test, review the destination account,
+content, permissions, queue, and rollback plan, and obtain explicit approval from the
+account owner. Do not schedule a post in the past as a substitute for a controlled test.
 
 ---
-
-## After the first success
-- Put `DRY_RUN` back to `1` for day-to-day safety until you're ready to run for real.
-- Metrics for the post will populate within a few worker cycles (reach/saves/likes appear on
-  the Overview row).
-- `KILL_SWITCH=1` halts the worker instantly at any time.
 
 ## Notes / gotchas
 - Media containers **expire after 24h** — the worker publishes promptly, so this only matters
