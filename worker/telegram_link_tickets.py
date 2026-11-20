@@ -147,3 +147,40 @@ def finish_link_ticket(
         ),
     ).rowcount
     return changed == 1
+
+
+def notify_link_ticket_results(conn, config, client, *, logger=None, limit: int = 10) -> int:
+    """Deliver completed Instagram-link outcomes to their originating Telegram chats."""
+    token = str(getattr(config, "telegram_bot_token", "") or "")
+    if not token:
+        return 0
+    rows = conn.execute(
+        """SELECT id, telegram_chat_id, status, result_account_name,
+                  result_account_id, failure_reason
+             FROM telegram_account_link_tickets
+            WHERE status IN ('connected', 'failed') AND notified_at IS NULL
+            ORDER BY id LIMIT ?""",
+        (max(1, min(int(limit), 50)),),
+    ).fetchall()
+    delivered = 0
+    for row in rows:
+        if row["status"] == "connected":
+            message = (
+                "✅ تم ربط حساب Instagram بنجاح.\\n"
+                f"الحساب: @{row['result_account_name'] or 'غير معروف'}\\n"
+                f"المعرّف: {row['result_account_id'] or 'غير متوفر'}"
+            )
+        else:
+            message = "❌ تعذر ربط حساب Instagram. " + str(row["failure_reason"] or "افتح الحسابات وحاول مجدداً.")
+        try:
+            client.send_message(token, str(row["telegram_chat_id"]), message[:3500])
+        except Exception as exc:
+            if logger:
+                logger.warning("Could not deliver Instagram link result for ticket %s: %s", row["id"], exc)
+            continue
+        changed = conn.execute(
+            "UPDATE telegram_account_link_tickets SET notified_at=? WHERE id=? AND notified_at IS NULL",
+            (_iso(datetime.now(timezone.utc)), row["id"]),
+        ).rowcount
+        delivered += int(changed == 1)
+    return delivered
