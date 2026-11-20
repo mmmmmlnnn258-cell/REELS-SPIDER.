@@ -12,6 +12,23 @@ safety switches unchanged until a separate, explicitly approved live test.
 > wording, so exact button labels may differ slightly; the panel locations are stable.
 > Items marked ⚠ couldn't be pinned to a single authoritative page.
 
+## Before deploying the protected dashboard
+
+This version adds owner-only dashboard login. **Set these three server variables before
+deploying it**, or the dashboard will show the setup warning and block access until they
+are configured:
+
+```
+DASHBOARD_USERNAME=choose-a-private-owner-login
+DASHBOARD_PASSWORD=use-a-unique-strong-password
+DASHBOARD_SESSION_SECRET=generate-at-least-32-random-characters
+```
+
+Keep the username and password private. Generate a random session secret (for example,
+`openssl rand -hex 32`) and store all three values in Railway's Variables/secret settings,
+not in GitHub or this document. The session secret must remain stable between restarts and
+must be at least 32 characters; changing it signs out existing sessions.
+
 ## What you need first
 - An Instagram **professional** account (Business or Creator). Personal accounts can't publish via API.
 - A Meta developer account (developers.facebook.com).
