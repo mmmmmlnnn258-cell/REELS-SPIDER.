@@ -188,7 +188,9 @@ def test_instagram_unknown_expiry_renews_to_learn_the_date(conn, ig_login_config
     assert params["grant_type"] == "ig_refresh_token"
 
 
-def test_explicit_instagram_login_refresh_ignores_global_graph_base(conn, config):
+def test_explicit_instagram_login_refresh_ignores_global_graph_base(conn, config, monkeypatch):
+    import base64
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", base64.b64encode(bytes(range(32))).decode())
     cfg = dataclasses.replace(config, graph_base="https://graph.facebook.com")
     cur = conn.execute(
         """INSERT INTO channels
