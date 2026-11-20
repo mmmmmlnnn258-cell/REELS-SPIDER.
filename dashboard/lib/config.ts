@@ -82,8 +82,8 @@ export const config = {
   // New channels with facebook_login or instagram_login use their fixed host in
   // worker/clients.py; changing this value must not switch those channels.
   graphBase: get("META_GRAPH_BASE", "https://graph.facebook.com"),
-  // The Meta app's own credentials, same vars as worker/config.py:241-242. Needed to
-  // extend a short-lived token and to call debug_token. Server-side only — these are
+  // The Meta app's own credentials, same vars as worker/config.py:241-242. Used by
+  // Facebook Login for Pages and Unified Login token verification. Server-side only — these are
   // read in route handlers and never included in a response or sent to the browser.
   metaAppId: get("META_APP_ID", ""),
   metaAppSecret: get("META_APP_SECRET", ""),
@@ -149,13 +149,18 @@ export function tiktokCredentials(): { clientKey: string; clientSecret: string }
   };
 }
 
+/** Optional Facebook Login for Business configuration id for Meta Unified Login. */
+export function instagramUnifiedConfigId(): string {
+  const env = liveEnv();
+  return (process.env.INSTAGRAM_UNIFIED_CONFIG_ID ?? env.INSTAGRAM_UNIFIED_CONFIG_ID ?? "").trim();
+}
+
 /**
- * Instagram Business Login credentials. The Instagram product uses its own app id
- * and secret from Instagram Business Login settings, distinct from META_APP_ID /
- * META_APP_SECRET.
+ * Classic Instagram Business Login credentials. The Instagram product uses its own
+ * app id and secret, distinct from META_APP_ID / META_APP_SECRET.
  *
- * Read live for the same reason as TikTok: the OAuth flow must use current credentials
- * from the server environment/root .env, never values supplied by the browser.
+ * Read live for the same reason as TikTok: OAuth must use current server credentials,
+ * never values supplied by the browser.
  */
 export function instagramCredentials(): { clientId: string; clientSecret: string } {
   const env = liveEnv();

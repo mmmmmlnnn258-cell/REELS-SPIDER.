@@ -281,6 +281,60 @@ def test_instagram_facebook_login_channel_uses_facebook_debug_host(conn, config)
     assert "refresh_access_token" not in session.calls[0][0]
 
 
+def test_unified_login_token_uses_facebook_graph_and_stays_encrypted(conn, config, monkeypatch):
+    import base64
+    import sqlite3
+
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", base64.b64encode(bytes(range(32))).decode())
+    cfg = dataclasses.replace(config, meta_app_id="app", meta_app_secret="secret",
+                              graph_base="https://graph.instagram.com")
+    cur = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, timezone, remote_account_id, access_token,
+            instagram_auth_method, instagram_unified_login)
+           VALUES ('instagram','Unified IG','UTC','ig-unified','INITIAL_TOKEN',
+                   'facebook_login',1)"""
+    )
+    conn.commit()
+    channel_id = cur.lastrowid
+    channel = db.get_channel(conn, channel_id)
+    session = FakeSession({"debug_token": _debug(None)})
+
+    assert check_channel(conn, cfg, channel, NOW, session=session) == "ok"
+    assert session.calls[0][0].startswith("https://graph.facebook.com/")
+    assert session.calls[0][1]["access_token"] == "app|secret"
+
+    db.update_channel(conn, channel_id, access_token="ROTATED_TOKEN")
+    raw_conn = sqlite3.connect(conn.execute("PRAGMA database_list").fetchone()[2])
+    try:
+        raw = raw_conn.execute(
+            "SELECT access_token FROM channels WHERE id = ?", (channel_id,)
+        ).fetchone()[0]
+    finally:
+        raw_conn.close()
+    from worker.token_crypto import decrypt_token, is_encrypted
+    assert is_encrypted(raw)
+    assert decrypt_token(raw) == "ROTATED_TOKEN"
+
+
+def test_unified_login_expiry_recommends_oauth_reconnect(conn, config):
+    cfg = dataclasses.replace(config, meta_app_id="app", meta_app_secret="secret")
+    cur = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, timezone, remote_account_id, access_token,
+            instagram_auth_method, instagram_unified_login)
+           VALUES ('instagram','Unified IG','UTC','ig-unified','TOKEN',
+                   'facebook_login',1)"""
+    )
+    conn.commit()
+    channel = db.get_channel(conn, cur.lastrowid)
+    session = FakeSession({
+        "debug_token": _debug(NOW + timedelta(days=5)),
+    })
+    assert check_channel(conn, cfg, channel, NOW, session=session) == "error"
+    assert "Connect Instagram" in db.get_channel(conn, cur.lastrowid)["token_error"]
+
+
 # -- Facebook (check only) -------------------------------------------------------------
 
 def test_facebook_page_token_that_never_expires_is_ok(conn, config):

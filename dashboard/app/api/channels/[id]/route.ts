@@ -57,6 +57,12 @@ export async function PATCH(
       { status: 400 }
     );
   }
+  if ("instagram_unified_login" in body) {
+    return NextResponse.json(
+      { error: "Instagram Unified Login can only be changed by completing the official OAuth flow." },
+      { status: 400 }
+    );
+  }
   // The auth method selects the Graph API host and token lifecycle. It must only
   // change inside connectInstagramChannel(), which stores the verified account id,
   // token, expiry, and method atomically after OAuth. A generic PATCH must never
@@ -72,11 +78,12 @@ export async function PATCH(
   // replace either half (account id or token) independently.
   if (
     existingChannel.platform === "instagram" &&
-    existingChannel.instagram_auth_method === "instagram_login" &&
+    (existingChannel.instagram_auth_method === "instagram_login" ||
+      existingChannel.instagram_unified_login === 1) &&
     ("remote_account_id" in body || "access_token" in body)
   ) {
     return NextResponse.json(
-      { error: "Instagram Login account ID and access token can only be changed by completing Instagram OAuth." },
+      { error: "OAuth-managed Instagram account ID and access token can only be changed by completing the matching Instagram OAuth connection flow." },
       { status: 400 }
     );
   }

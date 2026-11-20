@@ -168,8 +168,9 @@ export function connectInstagramChannel(input: {
   channelId: number;
   remoteAccountId: string;
   accessToken: string;
-  tokenExpiresAt: string;
-  instagramAuthMethod: "instagram_login";
+  tokenExpiresAt: string | null;
+  instagramAuthMethod: "instagram_login" | "facebook_login";
+  instagramUnifiedLogin?: boolean;
 }): "connected" | "channel_missing" | "already_linked" {
   const db = getDb();
   const tx = db.transaction(() => {
@@ -191,6 +192,7 @@ export function connectInstagramChannel(input: {
               access_token = @accessToken,
               token_expires_at = @tokenExpiresAt,
               instagram_auth_method = @instagramAuthMethod,
+              instagram_unified_login = @instagramUnifiedLogin,
               token_error = NULL,
               token_next_check_at = NULL,
               updated_at = @updatedAt
@@ -198,6 +200,7 @@ export function connectInstagramChannel(input: {
     ).run({
       ...input,
       accessToken: encryptInstagramAccessToken(input.accessToken),
+      instagramUnifiedLogin: input.instagramUnifiedLogin ? 1 : 0,
       updatedAt: nowIso(),
     });
     return "connected" as const;

@@ -7,9 +7,11 @@ export const runtime = "nodejs";
 
 const STATE_COOKIE = "instagram_oauth_state";
 const CHANNEL_COOKIE = "instagram_oauth_channel_id";
+const MODE_COOKIE = "instagram_oauth_mode";
 const REQUEST_TIMEOUT_MS = 20_000;
 
 type MetaIdentity = {
+  id?: number | string;
   user_id?: number | string;
   username?: string;
 };
@@ -23,7 +25,12 @@ type MetaShortToken = {
 type MetaPayload = MetaIdentity & MetaShortToken & {
   token_type?: string;
   expires_in?: number;
-  data?: Array<MetaIdentity & MetaShortToken>;
+  data?: Array<MetaIdentity & MetaShortToken> | MetaPayload;
+  scopes?: string[];
+  is_valid?: boolean;
+  app_id?: string;
+  type?: string;
+  paging?: { next?: string };
   error?: unknown;
 };
 
@@ -41,6 +48,7 @@ function back(
   if (clearOAuthCookies) {
     response.cookies.delete(STATE_COOKIE);
     response.cookies.delete(CHANNEL_COOKIE);
+    response.cookies.delete(MODE_COOKIE);
   }
   return response;
 }
@@ -64,6 +72,139 @@ async function readJson(response: Response): Promise<MetaPayload | null> {
  * authorization code -> short-lived token -> 60-day token -> verified IG identity.
  * The token is stored only after identity and target-channel checks pass.
  */
+
+/**
+ * Unified Login returns a Facebook Graph access token (often a non-expiring
+ * System User Access Token), not an Instagram short-lived token. Discover the
+ * Instagram professional asset explicitly; never infer it from /me or a Page.
+ */
+async function finishUnifiedLogin(
+  redirectUri: string,
+  channelId: number,
+  code: string,
+) {
+  const { metaAppId, metaAppSecret, graphVersion } = config;
+  if (!metaAppId || !metaAppSecret) {
+    return back(redirectUri, {
+      instagram_error: "Unified Login requires META_APP_ID and META_APP_SECRET on the server. No channel credentials were changed.",
+    });
+  }
+
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  try {
+    const tokenUrl = new URL(`/${graphVersion}/oauth/access_token`, "https://graph.facebook.com");
+    tokenUrl.searchParams.set("client_id", metaAppId);
+    tokenUrl.searchParams.set("client_secret", metaAppSecret);
+    tokenUrl.searchParams.set("redirect_uri", redirectUri);
+    tokenUrl.searchParams.set("code", code);
+    const tokenResponse = await fetch(tokenUrl, { method: "GET", signal: timeout, cache: "no-store" });
+    const tokenPayload = await readJson(tokenResponse);
+    if (!tokenResponse.ok || !tokenPayload?.access_token) {
+      return back(redirectUri, {
+        instagram_error: "Meta could not exchange the Unified Login authorization code. Check the app configuration and exact callback URL. No channel credentials were changed.",
+      });
+    }
+
+    const accessToken = tokenPayload.access_token;
+    const appToken = `${metaAppId}|${metaAppSecret}`;
+    const debugUrl = new URL(`/${graphVersion}/debug_token`, "https://graph.facebook.com");
+    debugUrl.searchParams.set("input_token", accessToken);
+    debugUrl.searchParams.set("access_token", appToken);
+    const debugResponse = await fetch(debugUrl, { method: "GET", signal: timeout, cache: "no-store" });
+    const debugPayload = await readJson(debugResponse);
+    const debug = debugPayload?.data as (MetaPayload | undefined);
+    if (
+      !debugResponse.ok ||
+      !debug?.is_valid ||
+      debug.type !== "SYSTEM_USER" ||
+      (debug.app_id && debug.app_id !== metaAppId)
+    ) {
+      return back(redirectUri, {
+        instagram_error: "Meta did not return a valid System User token for this app. Check that the configuration uses System-user access token, then reconnect. No channel credentials were changed.",
+      });
+    }
+
+    const required = [
+      "instagram_basic",
+      "instagram_content_publish",
+      "instagram_manage_comments",
+      "instagram_manage_messages",
+      "business_management",
+    ];
+    const granted = new Set(Array.isArray(debug.scopes) ? debug.scopes : []);
+    const missing = required.filter((permission) => !granted.has(permission));
+    if (missing.length) {
+      return back(redirectUri, {
+        instagram_error: "The Unified Login token is missing required permissions: " + missing.join(", ") + ". Add them to the Facebook Login for Business configuration, then reconnect. No channel credentials were changed.",
+      });
+    }
+
+    const accountsUrl = new URL(`/${graphVersion}/me/assigned_instagram_accounts`, "https://graph.facebook.com");
+    accountsUrl.searchParams.set("fields", "id,username");
+    accountsUrl.searchParams.set("limit", "100");
+    accountsUrl.searchParams.set("access_token", accessToken);
+    const accountsResponse = await fetch(accountsUrl, { method: "GET", signal: timeout, cache: "no-store" });
+    const accountsPayload = await readJson(accountsResponse);
+    const accounts = Array.isArray(accountsPayload?.data) ? accountsPayload.data : [];
+    if (!accountsResponse.ok || accountsPayload?.paging?.next) {
+      return back(redirectUri, {
+        instagram_error: "Meta could not return one complete list of Instagram accounts for this configuration. Check the business assets and permissions. No channel credentials were changed.",
+      });
+    }
+    if (accounts.length === 0) {
+      return back(redirectUri, {
+        instagram_error: "Meta authorized no Instagram account for this app. In the Unified Login configuration, select the professional Instagram account and grant business_management. No channel credentials were changed.",
+      });
+    }
+    if (accounts.length !== 1) {
+      return back(redirectUri, {
+        instagram_error: "This Unified Login configuration grants access to more than one Instagram account. Configure the login to select exactly one account for this channel, then reconnect. No channel credentials were changed.",
+      });
+    }
+
+    const account = accounts[0];
+    const remoteAccountId = account.id ? String(account.id) : "";
+    const username = typeof account.username === "string" ? account.username : "";
+    if (!remoteAccountId || !username) {
+      return back(redirectUri, {
+        instagram_error: "Meta did not return a complete Instagram account identity. No channel credentials were changed.",
+      });
+    }
+
+    const expiresIn = Number(tokenPayload.expires_in);
+    const tokenExpiresAt = Number.isFinite(expiresIn) && expiresIn > 0
+      ? new Date(Date.now() + expiresIn * 1000).toISOString()
+      : null;
+    const linked = connectInstagramChannel({
+      channelId,
+      remoteAccountId,
+      accessToken,
+      tokenExpiresAt,
+      instagramAuthMethod: "facebook_login",
+      instagramUnifiedLogin: true,
+    });
+    if (linked === "already_linked") {
+      return back(redirectUri, {
+        instagram_error: "This Instagram account is already linked to another channel. No channel credentials were changed.",
+      });
+    }
+    if (linked !== "connected") {
+      return back(redirectUri, {
+        instagram_error: "The selected Instagram channel no longer exists. No credentials were changed.",
+      });
+    }
+    return back(redirectUri, {
+      instagram_connected: String(channelId),
+      instagram_username: username,
+    });
+  } catch {
+    // Do not echo request errors: OAuth URLs may contain the authorization code or token.
+    return back(redirectUri, {
+      instagram_error: "Could not safely complete Unified Login with Meta. No channel credentials were changed.",
+    });
+  }
+}
+
 export async function GET(req: NextRequest) {
   const redirectUri = instagramRedirectUri();
   if (!redirectUri) {
@@ -77,6 +218,7 @@ export async function GET(req: NextRequest) {
   const denied = req.nextUrl.searchParams.get("error");
   const expectedState = req.cookies.get(STATE_COOKIE)?.value;
   const targetId = Number(req.cookies.get(CHANNEL_COOKIE)?.value);
+  const oauthMode = req.cookies.get(MODE_COOKIE)?.value ?? "instagram_login";
 
   // Validate the browser-bound state before handling either success or denial.
   // A forged error callback must not clear cookies belonging to a real OAuth attempt.
@@ -106,6 +248,15 @@ export async function GET(req: NextRequest) {
   if (!target || target.platform !== "instagram") {
     return back(redirectUri, {
       instagram_error: "The selected Instagram channel no longer exists. No credentials were changed.",
+    });
+  }
+
+  if (oauthMode === "unified_login") {
+    return finishUnifiedLogin(redirectUri, targetId, code);
+  }
+  if (oauthMode !== "instagram_login") {
+    return back(redirectUri, {
+      instagram_error: "The Instagram sign-in mode is invalid. Start the connection again.",
     });
   }
 
