@@ -243,7 +243,7 @@ test("callback refuses to connect when Meta did not grant every required permiss
 
     assert.equal(calls, 1);
     assert.match(location, /instagram_error=/);
-    assert.match(decodeURIComponent(location), /Missing: instagram_business_manage_insights/);
+    assert.match(new URL(location).searchParams.get("instagram_error") ?? "", /Missing: instagram_business_manage_insights/);
     assert.equal(channel.remote_account_id, null);
     assert.equal(channel.access_token, null);
     assert.equal(channel.instagram_auth_method, "legacy");
