@@ -317,6 +317,24 @@ def test_unified_login_token_uses_facebook_graph_and_stays_encrypted(conn, confi
     assert decrypt_token(raw) == "ROTATED_TOKEN"
 
 
+def test_unified_login_expiry_recommends_oauth_reconnect(conn, config):
+    cfg = dataclasses.replace(config, meta_app_id="app", meta_app_secret="secret")
+    cur = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, timezone, remote_account_id, access_token,
+            instagram_auth_method, instagram_unified_login)
+           VALUES ('instagram','Unified IG','UTC','ig-unified','TOKEN',
+                   'facebook_login',1)"""
+    )
+    conn.commit()
+    channel = db.get_channel(conn, cur.lastrowid)
+    session = FakeSession({
+        "debug_token": _debug(NOW + timedelta(days=5)),
+    })
+    assert check_channel(conn, cfg, channel, NOW, session=session) == "error"
+    assert "Connect Instagram" in db.get_channel(conn, cur.lastrowid)["token_error"]
+
+
 # -- Facebook (check only) -------------------------------------------------------------
 
 def test_facebook_page_token_that_never_expires_is_ok(conn, config):
