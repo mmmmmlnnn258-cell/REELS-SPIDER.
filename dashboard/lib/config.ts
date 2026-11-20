@@ -157,6 +157,12 @@ export function tiktokCredentials(): { clientKey: string; clientSecret: string }
  * Read live for the same reason as TikTok: the OAuth flow must use current credentials
  * from the server environment/root .env, never values supplied by the browser.
  */
+/** Optional Facebook Login for Business configuration id for Meta Unified Login. */
+export function instagramUnifiedConfigId(): string {
+  const env = liveEnv();
+  return (process.env.INSTAGRAM_UNIFIED_CONFIG_ID ?? env.INSTAGRAM_UNIFIED_CONFIG_ID ?? "").trim();
+}
+
 export function instagramCredentials(): { clientId: string; clientSecret: string } {
   const env = liveEnv();
   return {
