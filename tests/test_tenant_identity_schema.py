@@ -19,7 +19,7 @@ class TenantIdentitySchemaTests(unittest.TestCase):
         ).lastrowid
         user_id = self.db.execute(
             "INSERT INTO users(email, password_hash) VALUES (?, ?)",
-            (email, "scrypt$test-hash-that-is-not-a-password"),
+            (email, "scrypt$v1$test-hash-that-is-not-a-password"),
         ).lastrowid
         self.db.execute(
             "INSERT INTO tenant_memberships(tenant_id, user_id, role) VALUES (?, ?, 'owner')",
@@ -29,7 +29,6 @@ class TenantIdentitySchemaTests(unittest.TestCase):
 
     def test_session_requires_membership_and_stores_digest_shape(self):
         tenant_a, user_a = self.seed_membership()
-        # A session for an unrelated/non-member tenant-user pair is rejected.
         tenant_b = self.db.execute(
             "INSERT INTO tenants(name, slug) VALUES ('Beta', 'beta')"
         ).lastrowid
@@ -65,10 +64,10 @@ class TenantIdentitySchemaTests(unittest.TestCase):
         tenant_a, _ = self.seed_membership()
         with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute(
-                "INSERT INTO users(email, password_hash) VALUES ('OWNER@example.test', 'scrypt$another-test-hash')"
+                "INSERT INTO users(email, password_hash) VALUES ('OWNER@example.test', 'scrypt$v1$another-test-hash')"
             )
         user_b = self.db.execute(
-            "INSERT INTO users(email, password_hash) VALUES ('member@example.test', 'scrypt$member-test-hash')"
+            "INSERT INTO users(email, password_hash) VALUES ('member@example.test', 'scrypt$v1$member-test-hash')"
         ).lastrowid
         self.db.execute(
             "INSERT INTO tenant_memberships(tenant_id, user_id, role) VALUES (?, ?, 'member')",
