@@ -47,9 +47,14 @@ class TenantIdentitySchemaTests(unittest.TestCase):
                 (tenant_a, user_a, "NOT-A-SHA256-DIGEST"),
             )
 
-    def test_telegram_chat_is_bound_to_membership_and_unique(self):
+    def test_telegram_chat_requires_same_tenant_membership_and_is_unique(self):
         tenant_a, user_a = self.seed_membership()
-        tenant_b, _ = self.seed_membership(email="other@example.test", slug="beta")
+        tenant_b, user_b = self.seed_membership(email="other@example.test", slug="beta")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                "INSERT INTO tenant_telegram_chats(tenant_id, chat_id, linked_by_user_id) VALUES (?, '12345', ?)",
+                (tenant_b, user_a),
+            )
         self.db.execute(
             "INSERT INTO tenant_telegram_chats(tenant_id, chat_id, linked_by_user_id) VALUES (?, '12345', ?)",
             (tenant_a, user_a),
@@ -57,7 +62,7 @@ class TenantIdentitySchemaTests(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute(
                 "INSERT INTO tenant_telegram_chats(tenant_id, chat_id, linked_by_user_id) VALUES (?, '12345', ?)",
-                (tenant_b, user_a),
+                (tenant_b, user_b),
             )
 
     def test_email_and_membership_uniqueness_are_case_insensitive_and_scoped(self):
