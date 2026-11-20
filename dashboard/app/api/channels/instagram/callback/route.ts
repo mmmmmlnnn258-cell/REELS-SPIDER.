@@ -3,6 +3,7 @@ import { connectInstagramChannel, getChannel } from "@/lib/queries";
 import { getDb } from "@/lib/db";
 import { config, instagramCredentials, instagramRedirectUri } from "@/lib/config";
 import { INSTAGRAM_GRAPH_BASE, INSTAGRAM_SCOPES } from "@/lib/instagram-oauth";
+import { encryptInstagramAccessToken } from "@/lib/token-crypto";
 
 export const runtime = "nodejs";
 
@@ -73,10 +74,51 @@ function backWithTicket(
   return baseBack(redirectUri, params, clearOAuthCookies);
 }
 
-function recordTelegramTicketSuccess(ticketHash: string | undefined, channelId: number, username: string, accountId: string) {
+function recordTelegramTicketSuccess(ticketHash: string | undefined, username: string, accountId: string) {
   if (!ticketHash || !/^[a-f0-9]{64}$/.test(ticketHash)) return;
-  getDb().prepare("UPDATE telegram_account_link_tickets SET status='connected', result_account_name=?, result_account_id=?, failure_reason=NULL WHERE ticket_hash=? AND status='pending' AND consumed_at IS NOT NULL AND channel_id=? AND platform='instagram'")
-    .run(username.slice(0, 160), accountId.slice(0, 160), ticketHash, channelId);
+  getDb().prepare("UPDATE telegram_account_link_tickets SET status='connected', result_account_name=?, result_account_id=?, failure_reason=NULL WHERE ticket_hash=? AND status='pending' AND consumed_at IS NOT NULL AND platform='instagram'")
+    .run(username.slice(0, 160), accountId.slice(0, 160), ticketHash);
+}
+
+function saveTelegramInstagramAccount(
+  ticketHash: string | undefined,
+  username: string,
+  accountId: string,
+  accessToken: string,
+  tokenExpiresAt: string,
+): boolean {
+  if (!ticketHash || !/^[a-f0-9]{64}$/.test(ticketHash)) return false;
+  const db = getDb();
+  const now = new Date().toISOString();
+  const transaction = db.transaction(() => {
+    const ticket = db.prepare(
+      "SELECT telegram_chat_id, telegram_user_id FROM telegram_account_link_tickets WHERE ticket_hash=? AND status='pending' AND consumed_at IS NOT NULL AND platform='instagram' AND expires_at>?",
+    ).get(ticketHash, now) as { telegram_chat_id: string; telegram_user_id: string } | undefined;
+    if (!ticket) return false;
+    db.prepare(
+      `INSERT INTO instagram_accounts
+         (telegram_chat_id, telegram_user_id, instagram_user_id, username,
+          access_token, token_expires_at, auth_method, status,
+          created_at, updated_at, last_verified_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'instagram_login', 'connected', ?, ?, ?)
+       ON CONFLICT(telegram_user_id, instagram_user_id) DO UPDATE SET
+         telegram_chat_id=excluded.telegram_chat_id,
+         username=excluded.username,
+         access_token=excluded.access_token,
+         token_expires_at=excluded.token_expires_at,
+         status='connected',
+         updated_at=excluded.updated_at,
+         last_verified_at=excluded.last_verified_at`,
+    ).run(
+      ticket.telegram_chat_id, ticket.telegram_user_id, accountId, username,
+      encryptInstagramAccessToken(accessToken), tokenExpiresAt, now, now, now,
+    );
+    db.prepare(
+      "UPDATE telegram_account_link_tickets SET status='connected', result_account_name=?, result_account_id=?, failure_reason=NULL WHERE ticket_hash=?",
+    ).run(username.slice(0, 160), accountId.slice(0, 160), ticketHash);
+    return true;
+  });
+  return transaction.immediate();
 }
 function grantedPermissions(value: string | string[] | undefined): Set<string> {
   const entries = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
@@ -270,7 +312,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  if (!code || !Number.isSafeInteger(targetId) || targetId <= 0) {
+  if (!code || (!telegramTicketHash && (!Number.isSafeInteger(targetId) || targetId <= 0))) {
     return back(redirectUri, {
       instagram_error: "The Instagram sign-in session expired or did not match this browser. Try again.",
     });
@@ -401,6 +443,25 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    if (telegramTicketHash) {
+      const saved = saveTelegramInstagramAccount(
+        telegramTicketHash,
+        identity.username,
+        remoteAccountId,
+        longToken.access_token,
+        new Date(Date.now() + expiresIn * 1000).toISOString(),
+      );
+      if (!saved) {
+        return back(redirectUri, {
+          instagram_error: "انتهت صلاحية رابط إضافة الحساب. ابدأ الربط من البوت مرة أخرى.",
+        });
+      }
+      return back(redirectUri, {
+        instagram_account_connected: "1",
+        instagram_username: identity.username,
+      });
+    }
+
     // Atomically update the explicitly selected row and guard against the same IG
     // account being attached to a second channel by concurrent OAuth callbacks.
     const linked = connectInstagramChannel({
@@ -421,7 +482,23 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    recordTelegramTicketSuccess(telegramTicketHash, targetId, identity.username, remoteAccountId);
+    if (telegramTicketHash) {
+      const saved = saveTelegramInstagramAccount(
+        telegramTicketHash,
+        identity.username,
+        remoteAccountId,
+        longToken.access_token,
+        new Date(Date.now() + expiresIn * 1000).toISOString(),
+      );
+      if (!saved) {
+        return back(redirectUri, {
+          instagram_error: "انتهت صلاحية رابط إضافة الحساب. ابدأ الربط من البوت مرة أخرى.",
+        });
+      }
+      return back(redirectUri, { instagram_account_connected: "1", instagram_username: identity.username });
+    }
+
+    recordTelegramTicketSuccess(telegramTicketHash, identity.username, remoteAccountId);
     return back(redirectUri, {
       instagram_connected: String(targetId),
       instagram_username: identity.username,
