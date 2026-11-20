@@ -557,3 +557,49 @@ def test_global_publishing_controls_reject_unauthorized_user(conn, config):
         "SELECT is_paused FROM publishing_control WHERE id=1"
     ).fetchone()[0] == 0
     assert client.messages == []
+
+
+def test_accounts_screen_lists_only_the_callers_independent_instagram_accounts(conn, config):
+    conn.execute(
+        """INSERT INTO instagram_accounts
+           (telegram_chat_id, telegram_user_id, instagram_user_id, username,
+            access_token, token_expires_at, auth_method, status,
+            created_at, updated_at, last_verified_at)
+           VALUES ('7441755677', '7441755677', 'ig-42', 'my_brand',
+                   'encrypted-secret', '2099-01-01T00:00:00Z',
+                   'instagram_login', 'connected', '2026-11-20', '2026-11-20', '2026-11-20')"""
+    )
+    conn.execute(
+        """INSERT INTO instagram_accounts
+           (telegram_chat_id, telegram_user_id, instagram_user_id, username,
+            access_token, auth_method, status, created_at, updated_at, last_verified_at)
+           VALUES ('other-chat', 'other-user', 'ig-other', 'someone_else',
+                   'encrypted-secret', 'instagram_login', 'connected',
+                   '2026-11-20', '2026-11-20', '2026-11-20')"""
+    )
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(conn, cfg(config), client, callback(data="bs:accounts"))
+    body = client.messages[0][1]
+    assert "@my_brand" in body
+    assert "someone_else" not in body
+    assert "encrypted-secret" not in body
+    buttons = [button for row in client.messages[0][2]["inline_keyboard"] for button in row]
+    assert any(button["callback_data"] == "bs:account:add" for button in buttons)
+
+
+def test_add_account_callback_creates_channel_free_instagram_ticket(conn, config):
+    client = FakeTelegram()
+    configured = replace(cfg(config), telegram_dashboard_url="https://dashboard.example.test")
+    assert process_control_update(
+        conn, configured, client, callback(data="bs:account:add"),
+    )
+    row = conn.execute(
+        "SELECT telegram_chat_id, telegram_user_id, platform, status FROM telegram_account_link_tickets"
+    ).fetchone()
+    assert tuple(row) == ("7441755677", "7441755677", "instagram", "pending")
+    assert "channel_id" not in row.keys()
+    keyboard = client.messages[0][2]["inline_keyboard"]
+    assert keyboard[0][0]["url"].startswith(
+        "https://dashboard.example.test/api/channels/instagram/telegram?ticket="
+    )
