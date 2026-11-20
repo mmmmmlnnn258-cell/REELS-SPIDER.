@@ -17,3 +17,5 @@ tzdata>=2024.1
 # the dashboard prefers, so a Mac clone downloads nothing. Copied into data/bin by
 # worker/ffmpeg_setup.py.
 imageio-ffmpeg>=0.6; sys_platform == "win32"
+# AES-256-GCM for encrypted Instagram Login credentials.
+cryptography>=42
