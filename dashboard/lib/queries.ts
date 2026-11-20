@@ -202,7 +202,10 @@ export function connectInstagramChannel(input: {
     });
     return "connected" as const;
   });
-  return tx();
+  // Acquire SQLite's write lock before checking duplicate account ownership. Without
+  // IMMEDIATE, two concurrent OAuth callbacks can both read 'not linked' and one then
+  // fail with SQLITE_BUSY_SNAPSHOT while upgrading its deferred transaction.
+  return tx.immediate();
 }
 
 export function updateChannel(
