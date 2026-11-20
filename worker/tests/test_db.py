@@ -51,3 +51,14 @@ def test_due_publications_break_ties_by_id(conn):
 
     got = [r["id"] for r in db.fetch_due_publications(conn, NOW.isoformat())]
     assert got == ids, "story slides must publish in insertion (slide) order"
+
+def test_database_connections_wait_for_transient_writer_contention(db_path):
+    """Every worker connection uses the explicit lock wait, not sqlite3's default."""
+    connection = db.connect(db_path)
+    try:
+        timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+        assert timeout == db.SQLITE_BUSY_TIMEOUT_MS
+        assert timeout == 30_000
+    finally:
+        connection.close()
+
