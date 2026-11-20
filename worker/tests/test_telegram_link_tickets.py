@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -6,6 +7,7 @@ from worker.telegram_link_tickets import (
     claim_link_ticket,
     create_link_ticket,
     finish_link_ticket,
+    notify_link_ticket_results,
 )
 
 
@@ -88,3 +90,54 @@ def test_ticket_completion_is_safe_and_single_transition(conn):
         "FROM telegram_account_link_tickets"
     ).fetchone()
     assert tuple(row) == ("connected", "@sample", "ig-100", None)
+
+
+class _TelegramRecorder:
+    def __init__(self):
+        self.messages = []
+
+    def send_message(self, token, chat_id, message):
+        self.messages.append((token, chat_id, message))
+
+
+def test_failed_oauth_result_is_delivered_to_originating_chat(conn):
+    channel_id = _channel(conn)
+    ticket = create_link_ticket(
+        conn, chat_id="chat-fail", user_id="user-fail",
+        channel_id=channel_id, platform="instagram",
+    )
+    assert claim_link_ticket(conn, ticket.token) is not None
+    assert finish_link_ticket(
+        conn, token=ticket.token, success=False,
+        failure_reason="تم إلغاء تسجيل الدخول.",
+    )
+    client = _TelegramRecorder()
+    delivered = notify_link_ticket_results(
+        conn, SimpleNamespace(telegram_bot_token="bot-token"), client,
+    )
+    assert delivered == 1
+    assert client.messages[0][0:2] == ("bot-token", "chat-fail")
+    assert "تم إلغاء تسجيل الدخول" in client.messages[0][2]
+    row = conn.execute("SELECT notified_at FROM telegram_account_link_tickets").fetchone()
+    assert row["notified_at"] is not None
+
+
+def test_abandoned_meta_login_expires_and_notifies_chat(conn):
+    channel_id = _channel(conn)
+    now = datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc)
+    ticket = create_link_ticket(
+        conn, chat_id="chat-expired", user_id="user-expired",
+        channel_id=channel_id, platform="instagram", now=now,
+    )
+    assert claim_link_ticket(conn, ticket.token, now=now + timedelta(minutes=1)) is not None
+    conn.execute(
+        "UPDATE telegram_account_link_tickets SET expires_at=?",
+        ((now + timedelta(minutes=11)).isoformat(),),
+    )
+    client = _TelegramRecorder()
+    delivered = notify_link_ticket_results(
+        conn, SimpleNamespace(telegram_bot_token="bot-token"), client,
+    )
+    assert delivered == 1
+    assert client.messages[0][1] == "chat-expired"
+    assert "انتهت مهلة" in client.messages[0][2]
