@@ -657,3 +657,16 @@ def test_publish_now_failure_notice_is_sent_after_database_transaction(conn, con
     assert conn.execute(
         "SELECT status FROM publications WHERE id=?", (publication,)
     ).fetchone()[0] == "scheduled"
+
+
+def test_accounts_screen_exposes_add_instagram_action(conn, config):
+    client = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), client, callback(data="bs:accounts")
+    )
+    body, keyboard = client.messages[0][1], client.messages[0][2]["inline_keyboard"]
+    assert "لا توجد حسابات مرتبطة حتى الآن" in body
+    assert any(
+        button["callback_data"] == "bs:account:add"
+        for row in keyboard for button in row
+    )
