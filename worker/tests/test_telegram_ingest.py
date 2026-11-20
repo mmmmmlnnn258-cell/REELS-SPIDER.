@@ -290,6 +290,7 @@ def test_telegram_receiver_retries_same_update_after_sqlite_busy(
     conn, config, monkeypatch
 ):
     import logging
+    import sqlite3
     import threading
 
     from worker import telegram_ingest
