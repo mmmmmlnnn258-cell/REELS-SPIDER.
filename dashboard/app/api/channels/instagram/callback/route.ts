@@ -25,7 +25,7 @@ type MetaShortToken = {
 type MetaPayload = MetaIdentity & MetaShortToken & {
   token_type?: string;
   expires_in?: number;
-  data?: Array<MetaIdentity & MetaShortToken>;
+  data?: Array<MetaIdentity & MetaShortToken> | MetaPayload;
   scopes?: string[];
   is_valid?: boolean;
   app_id?: string;
