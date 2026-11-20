@@ -229,7 +229,7 @@ test("callback refuses to connect when Meta did not grant every required permiss
         data: [{
           access_token: "short-lived-secret",
           user_id: "app-scoped-id",
-          permissions: "instagram_business_basic,instagram_business_content_publish",
+          permissions: "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages",
         }],
       });
     }
@@ -245,6 +245,7 @@ test("callback refuses to connect when Meta did not grant every required permiss
     assert.match(location, /instagram_error=/);
     assert.match(decodeURIComponent(location), /instagram_business_manage_comments/);
     assert.match(decodeURIComponent(location), /instagram_business_manage_messages/);
+    assert.match(decodeURIComponent(location), /instagram_business_manage_insights/);
     assert.match(decodeURIComponent(location), /instagram_business_manage_insights/);
     assert.equal(channel.remote_account_id, null);
     assert.equal(channel.access_token, null);
