@@ -35,62 +35,67 @@ must be at least 32 characters; changing it signs out existing sessions.
 
 ---
 
-## IMPORTANT — check the login mode before creating a Meta app
+## Step 1 — Choose the login mode offered by your Meta app
 
-The OAuth code currently merged into BLACK SPIDER implements the classic Instagram
-Business Login flow (`instagram.com/oauth/authorize`, Instagram App ID/Secret, and
-the four `instagram_business_*` scopes). It does **not** implement Meta's newer
-Unified Login / Facebook Login for Business `config_id` flow.
+BLACK SPIDER supports both official connection paths:
 
-Recent reports from October–November 2026 indicate that newly created Meta apps using
-the "Manage messaging & content on Instagram" use case may be required to use Unified
-Login, while the classic Instagram Login setup is unavailable to those apps. Meta's
-public documentation and dashboard behavior must be checked for the specific app before
-choosing an implementation path. See the [Meta Instagram API changelog](https://developers.facebook.com/docs/instagram/platform/instagram-api/changelog/)
-and these recent [Postiz report](https://github.com/gitroomhq/postiz-app/issues/2350) and
-[OpenPost follow-up](https://github.com/getopenpost/openpost/issues/495). The latter two
-are third-party reports, not a substitute for confirming the exact options shown in your
-own Meta developer dashboard.
+- **Classic Instagram Business Login** for apps where Meta still offers
+  **API setup with Instagram login**. It uses `INSTAGRAM_APP_ID` and
+  `INSTAGRAM_APP_SECRET`, the `instagram_business_*` permissions, and
+  `graph.instagram.com`.
+- **Unified Login** for newer apps where Meta shows **API setup with Unified login**.
+  It uses Facebook Login for Business and a `config_id`, the general Meta App ID/Secret,
+  a Facebook Graph access token, and `graph.facebook.com`.
 
-**Do not create a new Meta app or enter OAuth credentials into Railway yet.** If the new
-app dashboard only offers Unified Login, the current BLACK SPIDER OAuth button will not
-complete that flow. A code update is required first. Do not try to work around this by
-pasting a token manually or changing `META_GRAPH_BASE`.
+Recent Meta app creation flows have been reported to require Unified Login for new apps.
+The older standalone Instagram authorize URL and scope list are rejected for those apps.
+See the [Meta Instagram API changelog](https://developers.facebook.com/docs/instagram/platform/instagram-api/changelog/),
+the official [assigned Instagram accounts edge](https://developers.facebook.com/docs/graph-api/reference/user/assigned_instagram_accounts/),
+and the [System User token documentation](https://developers.facebook.com/docs/business-management-apis/system-users/install-apps-and-generate-tokens/).
+The forced-Unified-Login rollout behavior is also described in these third-party
+[Postiz reports](https://github.com/gitroomhq/postiz-app/issues/2350) and
+[OpenPost findings](https://github.com/getopenpost/openpost/issues/495); confirm the exact
+options in your own Meta dashboard.
 
-The next implementation must be designed around the actual configuration Meta provides:
-- classic Instagram Business Login for an existing app that still supports it; or
-- Unified Login / Facebook Login for Business using the app's `config_id`, if that is
-  the mode Meta requires for a newly created app.
+## Step 2 — Configure the matching Meta login path
 
-These are different authorization and token flows. We must not treat a `config_id`
-as an Instagram App ID or assume the classic Instagram token exchange, identity endpoint,
-token expiry, or Graph host applies to Unified Login.
+### If Meta offers classic Instagram Login
 
-## Step 1 — Confirm the Meta app login mode (do not create credentials yet)
-
-1. Open [Meta for Developers](https://developers.facebook.com/) and inspect the app
-   creation/use-case flow and the Instagram setup page.
-2. If you already have a Meta app, inspect its Instagram setup mode; do not change its
-   permissions or credentials.
-3. If the dashboard says "API setup with Instagram login is not available for newer apps"
-   or shows **API setup with Unified Login**, stop there. Do not enter any credentials in
-   Railway. The current code needs a separate Unified Login implementation and test.
-4. If Meta explicitly offers the classic **API setup with Instagram login** for an
-   existing app, the current OAuth implementation may be compatible with that classic
-   path, subject to a real OAuth test after the server is safely configured.
-
-## Step 2 — Secrets and callback (only after the supported flow is confirmed)
-
-Do not configure these values until the implementation and the Meta app's login mode match.
-The current classic flow expects:
+Use the Instagram-specific app credentials:
 ```
 INSTAGRAM_APP_ID=...
 INSTAGRAM_APP_SECRET=...
 INSTAGRAM_REDIRECT_URI=https://your-domain.example/api/channels/instagram/callback
 TOKEN_ENCRYPTION_KEY=...
 ```
-The exact callback must be registered in the matching Meta login configuration. Do not
-substitute credentials from a different login mode.
+Register the exact HTTPS callback in Instagram Business Login settings. Do not substitute
+`META_APP_ID` or `META_APP_SECRET`.
+
+### If Meta requires Unified Login
+
+1. In the Meta app, open the Instagram use case and **API setup with Unified login**.
+2. Create a Facebook Login for Business configuration with the Instagram permissions
+   required by BLACK SPIDER: `instagram_basic`, `instagram_content_publish`,
+   `instagram_manage_comments`, and `instagram_manage_messages`.
+3. The server also needs `business_management` to discover the Instagram assets granted
+   to the login. If the Unified Login permission editor does not offer it, add the
+   Facebook Login for Business product and edit that configuration's permissions there.
+   Meta may require the relevant Advanced Access for this permission.
+4. In the configuration, select the professional Instagram account to connect. The current
+   callback deliberately accepts **exactly one Instagram account per connection** so it
+   cannot guess which account should replace the selected channel. Repeat the flow for
+   another channel/account.
+5. Copy the configuration ID (`config_id`) into the server environment:
+   ```
+   META_APP_ID=...
+   META_APP_SECRET=...
+   INSTAGRAM_UNIFIED_CONFIG_ID=...
+   INSTAGRAM_REDIRECT_URI=https://your-domain.example/api/channels/instagram/callback
+   TOKEN_ENCRYPTION_KEY=...
+   ```
+   Register that exact HTTPS callback in the Unified Login / Facebook Login for Business
+   configuration. The Unified Login path uses `META_APP_ID` and `META_APP_SECRET`;
+   it does not use `INSTAGRAM_APP_ID` or `INSTAGRAM_APP_SECRET`.
 
 Generate `TOKEN_ENCRYPTION_KEY` as canonical Base64 for exactly 32 random bytes:
 ```sh
@@ -101,22 +106,23 @@ Losing or changing it without re-encrypting stored tokens makes connected Instag
 credentials unreadable.
 
 The connected Instagram account must be **Business or Creator**; ordinary personal
-accounts are not supported.
+accounts are not supported. Keep the app in Development mode while testing and ensure the
+account is eligible under Meta's app-role/tester rules.
 
 ## Step 3 — Connect the existing channel with OAuth
 1. In SocialScheduler → **Channels**, create an Instagram channel if you do not already
    have one. Creating the channel does not require an account ID or access token.
 2. On the exact Instagram channel card you want to connect, press **ربط Instagram**.
-3. Sign in directly with Instagram and approve the requested permissions:
-   `instagram_business_basic`, `instagram_business_content_publish`,
-   and `instagram_business_manage_comments`, `instagram_business_manage_messages`.
-4. Meta returns to the registered callback. The server exchanges the code, obtains a
-   long-lived token, verifies the account identity, encrypts the token, and updates only
-   the selected channel. It refuses to link the same Instagram account to a second channel.
+3. BLACK SPIDER automatically uses Unified Login when `INSTAGRAM_UNIFIED_CONFIG_ID`
+   is configured; otherwise it uses classic Instagram Business Login.
+4. Meta returns to the registered callback. The server exchanges and verifies the token,
+   discovers the granted professional Instagram account, encrypts the token, and updates
+   only the selected channel. It refuses duplicate account links.
 5. Confirm the success message shows the expected Instagram username and channel number.
    The access token remains server-side; do not paste it into chat, GitHub, or the dashboard.
-6. The worker automatically selects `graph.instagram.com` for this Instagram Login
-   channel. Leave `META_GRAPH_BASE` unchanged; it remains the fallback for legacy channels.
+6. The worker selects the Graph host per channel: `graph.instagram.com` for classic
+   Instagram Login and `graph.facebook.com` for Unified Login / Facebook Login. Leave
+   `META_GRAPH_BASE` unchanged; it remains the fallback for legacy channels.
 
 If OAuth fails, read the reason shown on the Channels page. Common causes are a callback URL
 that does not exactly match Meta's registered URL, missing Instagram app credentials, a
@@ -429,10 +435,11 @@ dropping the text or guessing at an image.
 
 ## Instagram Login token encryption
 
-Instagram Login access tokens are stored in SQLite as versioned AES-256-GCM envelopes.
-The dashboard encrypts the token when OAuth completes; the Python worker decrypts it
-inside its SQLite row boundary and encrypts any renewed token before writing it back.
-Existing plaintext legacy/Facebook Login/TikTok credentials are left unchanged.
+OAuth-managed Instagram access tokens (classic Instagram Login and Unified Login)
+are stored in SQLite as versioned AES-256-GCM envelopes. The dashboard encrypts the token
+when OAuth completes; the Python worker decrypts it inside its SQLite row boundary and
+encrypts any renewed token before writing it back. Existing plaintext legacy/Facebook
+Login/TikTok credentials are left unchanged.
 
 Set `TOKEN_ENCRYPTION_KEY` in the shared runtime environment before completing the
 first Instagram Login connection. It must be canonical Base64 encoding of exactly 32
@@ -444,6 +451,6 @@ python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)
 
 Use the SAME key for the dashboard and worker and every replica sharing the database.
 Do not commit the key or put it in client-visible settings. Keep a secure backup: losing
-or changing it without re-encrypting the stored tokens makes those Instagram Login
+or changing it without re-encrypting the stored tokens makes those OAuth-managed Instagram
 connections unreadable. Missing or incorrect keys and tampered ciphertext fail closed;
 legacy plaintext tokens remain readable.
