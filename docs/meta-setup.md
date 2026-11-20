@@ -46,8 +46,11 @@ Recent reports from October–November 2026 indicate that newly created Meta app
 the "Manage messaging & content on Instagram" use case may be required to use Unified
 Login, while the classic Instagram Login setup is unavailable to those apps. Meta's
 public documentation and dashboard behavior must be checked for the specific app before
-choosing an implementation path. See the current Meta changelog and the observed reports
-linked below.
+choosing an implementation path. See the [Meta Instagram API changelog](https://developers.facebook.com/docs/instagram/platform/instagram-api/changelog/)
+and these recent [Postiz report](https://github.com/gitroomhq/postiz-app/issues/2350) and
+[OpenPost follow-up](https://github.com/getopenpost/openpost/issues/495). The latter two
+are third-party reports, not a substitute for confirming the exact options shown in your
+own Meta developer dashboard.
 
 **Do not create a new Meta app or enter OAuth credentials into Railway yet.** If the new
 app dashboard only offers Unified Login, the current BLACK SPIDER OAuth button will not
