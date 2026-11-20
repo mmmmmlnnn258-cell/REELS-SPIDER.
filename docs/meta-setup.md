@@ -452,5 +452,11 @@ python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)
 Use the SAME key for the dashboard and worker and every replica sharing the database.
 Do not commit the key or put it in client-visible settings. Keep a secure backup: losing
 or changing it without re-encrypting the stored tokens makes those OAuth-managed Instagram
-connections unreadable. Missing or incorrect keys and tampered ciphertext fail closed;
+connections unreadable.
+
+Unified Login tokens are checked with Meta's `debug_token` endpoint through
+`graph.facebook.com`; the worker does not send them to Instagram's
+`ig_refresh_token` endpoint. If Meta issues a token with an expiry, the worker warns
+before it expires and the account must be reconnected. If Meta reports no expiry, the
+worker records it as non-expiring and continues periodic validity checks. Missing or incorrect keys and tampered ciphertext fail closed;
 legacy plaintext tokens remain readable.
