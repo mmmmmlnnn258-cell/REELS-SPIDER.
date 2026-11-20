@@ -13,7 +13,14 @@ import { NoChannelsYet, OverviewBody } from "@/components/overview-body";
 export const dynamic = "force-dynamic";
 
 export default function OverviewPage() {
-  const channels = getActiveChannels();
+  const channels = getActiveChannels().map((c) => ({
+    id: c.id,
+    platform: c.platform,
+    account_name: c.account_name,
+    color_hue: c.color_hue,
+    avatar_path: c.avatar_path,
+    timezone: c.timezone,
+  }));
   const pubs = getPublicationsOverview();
   const worker = getWorkerStatus();
 
