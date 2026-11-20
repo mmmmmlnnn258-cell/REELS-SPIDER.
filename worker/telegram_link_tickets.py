@@ -1,8 +1,7 @@
-"""Single-use, Telegram-bound account-link ticket primitives.
+"""Single-use Telegram-bound Instagram account-link tickets.
 
-The raw bearer ticket is returned only to the caller that sends it to Telegram.
-SQLite stores only its SHA-256 digest. Tickets are scoped to one allow-listed
-Telegram identity, one existing channel, one platform, and a short expiry.
+Only a SHA-256 digest of the bearer ticket is stored. Tickets belong to a
+Telegram identity, never to a publishing channel.
 """
 from __future__ import annotations
 
@@ -11,7 +10,6 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
 import sqlite3
-
 
 TICKET_TTL = timedelta(minutes=10)
 
@@ -26,7 +24,6 @@ class LinkTicket:
 class ClaimedLinkTicket:
     chat_id: str
     user_id: str
-    channel_id: int
     platform: str
 
 
@@ -45,21 +42,15 @@ def create_link_ticket(
     *,
     chat_id: str,
     user_id: str,
-    channel_id: int,
-    platform: str,
+    platform: str = "instagram",
     now: datetime | None = None,
 ) -> LinkTicket:
-    """Create a 10-minute ticket for a verified, existing channel."""
+    """Create a 10-minute ticket for an allow-listed Telegram identity."""
     chat_id, user_id = str(chat_id).strip(), str(user_id).strip()
     if not chat_id or not user_id:
         raise ValueError("Telegram chat and user IDs are required.")
     if platform != "instagram":
         raise ValueError("Only Instagram account linking is supported.")
-    channel = conn.execute(
-        "SELECT id, platform FROM channels WHERE id = ?", (int(channel_id),)
-    ).fetchone()
-    if channel is None or channel["platform"] != platform:
-        raise ValueError("The selected channel does not match the requested platform.")
 
     current = now or datetime.now(timezone.utc)
     created_at = _iso(current)
@@ -67,20 +58,19 @@ def create_link_ticket(
     token = secrets.token_urlsafe(32)
     digest = _digest(token)
 
-    # Expire old pending tickets for this exact chat/channel before issuing a new one.
     conn.execute(
         """UPDATE telegram_account_link_tickets
               SET status = 'expired'
-            WHERE telegram_chat_id = ? AND channel_id = ?
+            WHERE telegram_chat_id = ? AND telegram_user_id = ?
               AND status = 'pending' AND expires_at <= ?""",
-        (chat_id, int(channel_id), created_at),
+        (chat_id, user_id, created_at),
     )
     conn.execute(
         """INSERT INTO telegram_account_link_tickets
-           (ticket_hash, telegram_chat_id, telegram_user_id, channel_id,
-            platform, status, created_at, expires_at)
-           VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)""",
-        (digest, chat_id, user_id, int(channel_id), platform, created_at, expires_at),
+           (ticket_hash, telegram_chat_id, telegram_user_id, platform,
+            status, created_at, expires_at)
+           VALUES (?, ?, ?, ?, 'pending', ?, ?)""",
+        (digest, chat_id, user_id, platform, created_at, expires_at),
     )
     return LinkTicket(token=token, expires_at=expires_at)
 
@@ -96,7 +86,7 @@ def claim_link_ticket(
         return None
     current = _iso(now or datetime.now(timezone.utc))
     row = conn.execute(
-        """SELECT id, telegram_chat_id, telegram_user_id, channel_id, platform
+        """SELECT id, telegram_chat_id, telegram_user_id, platform
              FROM telegram_account_link_tickets
             WHERE ticket_hash = ? AND status = 'pending'
               AND consumed_at IS NULL AND expires_at > ?""",
@@ -116,7 +106,6 @@ def claim_link_ticket(
     return ClaimedLinkTicket(
         chat_id=str(row["telegram_chat_id"]),
         user_id=str(row["telegram_user_id"]),
-        channel_id=int(row["channel_id"]),
         platform=str(row["platform"]),
     )
 
@@ -130,7 +119,6 @@ def finish_link_ticket(
     account_id: str | None = None,
     failure_reason: str | None = None,
 ) -> bool:
-    """Record a safe, user-displayable outcome for the bot's status poller."""
     status = "connected" if success else "failed"
     changed = conn.execute(
         """UPDATE telegram_account_link_tickets
@@ -138,24 +126,18 @@ def finish_link_ticket(
                   failure_reason = ?
             WHERE ticket_hash = ? AND status = 'pending'
               AND consumed_at IS NOT NULL""",
-        (
-            status,
-            (account_name or "")[:160] or None,
-            (account_id or "")[:160] or None,
-            (failure_reason or "")[:300] or None,
-            _digest(token),
-        ),
+        (status, (account_name or "")[:160] or None,
+         (account_id or "")[:160] or None,
+         (failure_reason or "")[:300] or None, _digest(token)),
     ).rowcount
     return changed == 1
 
 
 def notify_link_ticket_results(conn, config, client, *, logger=None, limit: int = 10) -> int:
-    """Deliver completed Instagram-link outcomes to their originating Telegram chats."""
+    """Deliver durable Instagram account-link results to the originating Telegram chat."""
     token = str(getattr(config, "telegram_bot_token", "") or "")
     if not token:
         return 0
-    # If a user closes the Meta page without returning to the callback, the
-    # consumed ticket must still produce a visible failure instead of hanging forever.
     now = datetime.now(timezone.utc)
     conn.execute(
         """UPDATE telegram_account_link_tickets
@@ -176,8 +158,8 @@ def notify_link_ticket_results(conn, config, client, *, logger=None, limit: int 
     for row in rows:
         if row["status"] == "connected":
             message = (
-                "✅ تم ربط حساب Instagram بنجاح.\\n"
-                f"الحساب: @{row['result_account_name'] or 'غير معروف'}\\n"
+                "✅ تم ربط حساب Instagram بنجاح.\n"
+                f"الحساب: @{row['result_account_name'] or 'غير معروف'}\n"
                 f"المعرّف: {row['result_account_id'] or 'غير متوفر'}"
             )
         else:
@@ -185,7 +167,6 @@ def notify_link_ticket_results(conn, config, client, *, logger=None, limit: int 
         try:
             client.send_message(token, str(row["telegram_chat_id"]), message[:3500])
         except Exception:
-            # Telegram errors may contain request URLs with the bot token; never log them.
             if logger:
                 logger.warning("Could not deliver Instagram link result for ticket %s; delivery will be retried.", row["id"])
             continue
