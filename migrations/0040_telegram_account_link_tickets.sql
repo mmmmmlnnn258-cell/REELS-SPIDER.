@@ -1,12 +1,30 @@
--- 0040 — short-lived, single-use Telegram-originated account-link tickets.
--- Store only a SHA-256 digest of the bearer token. A ticket is bound to the
--- allow-listed Telegram chat/user, one existing Instagram channel.
+-- 0040 — Instagram accounts are independent of publishing channels.
+-- Tickets are single-use, Telegram-bound and contain only a SHA-256 digest.
+CREATE TABLE instagram_accounts (
+  id INTEGER PRIMARY KEY,
+  telegram_chat_id TEXT NOT NULL,
+  telegram_user_id TEXT NOT NULL,
+  instagram_user_id TEXT NOT NULL,
+  username TEXT NOT NULL,
+  access_token TEXT NOT NULL,
+  token_expires_at TEXT,
+  auth_method TEXT NOT NULL DEFAULT 'instagram_login'
+    CHECK (auth_method = 'instagram_login'),
+  status TEXT NOT NULL DEFAULT 'connected'
+    CHECK (status IN ('connected', 'expired', 'revoked', 'error')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_verified_at TEXT NOT NULL,
+  UNIQUE (telegram_user_id, instagram_user_id)
+);
+CREATE INDEX idx_instagram_accounts_owner
+  ON instagram_accounts(telegram_chat_id, telegram_user_id, created_at DESC);
+
 CREATE TABLE telegram_account_link_tickets (
   id INTEGER PRIMARY KEY,
   ticket_hash TEXT NOT NULL UNIQUE,
   telegram_chat_id TEXT NOT NULL,
   telegram_user_id TEXT NOT NULL,
-  channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
   platform TEXT NOT NULL CHECK (platform = 'instagram'),
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'connected', 'failed', 'expired', 'canceled')),
