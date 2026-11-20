@@ -57,8 +57,12 @@ def test_due_publications_break_ties_by_id(conn):
 
 
 def test_database_connections_wait_for_transient_writer_contention(db_path):
-    """A competing writer waits for a short transaction instead of failing SQLITE_BUSY."""
-    connection = db.connect(db_path)
+    """Opening a connection and starting a write both tolerate a concurrent writer."""
+    # Production enables WAL once in migrate.py before starting either process.
+    setup = sqlite3.connect(str(db_path))
+    setup.execute("PRAGMA journal_mode = WAL")
+    setup.close()
+
     holder = sqlite3.connect(str(db_path), timeout=1, check_same_thread=False)
     holder.execute("BEGIN IMMEDIATE")
     release = threading.Event()
@@ -71,10 +75,15 @@ def test_database_connections_wait_for_transient_writer_contention(db_path):
 
     thread = threading.Thread(target=release_writer, daemon=True)
     thread.start()
+    connection = None
     try:
+        # This used to fail here because connect() re-issued PRAGMA journal_mode=WAL
+        # while another connection held the writer lock.
+        connection = db.connect(db_path)
         connection.execute("BEGIN IMMEDIATE")
         assert release.wait(timeout=2)
         connection.rollback()
     finally:
-        connection.close()
+        if connection is not None:
+            connection.close()
         thread.join(timeout=2)
