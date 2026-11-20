@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 import re
+from urllib.parse import urlencode
+from .telegram_link_tickets import create_link_ticket
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -536,6 +538,21 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             _send(client, token, chat_id, body, {"inline_keyboard": keyboard})
             return True
 
+        if data.startswith("bs:account:link:"):
+            raw_id = data.removeprefix("bs:account:link:")
+            if not raw_id.isdigit():
+                _send(client, token, chat_id, "رقم قناة غير صالح.", _menu())
+                return True
+            channel_id = int(raw_id)
+            channel = conn.execute("SELECT id, platform, account_name FROM channels WHERE id=?", (channel_id,)).fetchone()
+            base = str(getattr(config, "telegram_dashboard_url", "") or "").strip().rstrip("/")
+            if not channel or channel["platform"] != "instagram" or not base.startswith("https://"):
+                _send(client, token, chat_id, "تعذر بدء ربط Instagram. تحقق من القناة وإعداد رابط HTTPS للوحة التحكم.", _menu())
+                return True
+            ticket = create_link_ticket(conn, chat_id=chat_id, user_id=sender_id, channel_id=channel_id, platform="instagram")
+            url = base + "/api/channels/instagram/telegram?" + urlencode({"ticket": ticket.token})
+            _send(client, token, chat_id, "افتح الرابط لإكمال ربط Instagram خلال 10 دقائق. لا ترسل كلمة المرور أو رمز التحقق للبوت.", {"inline_keyboard": [[{"text": "فتح تسجيل دخول Instagram", "url": url}]]})
+            return True
         if data == "bs:accounts":
             rows = conn.execute(
                 """SELECT id, platform, account_name, remote_account_id, linked_page_id,
