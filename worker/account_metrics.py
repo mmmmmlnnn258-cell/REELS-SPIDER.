@@ -57,6 +57,7 @@ COLUMN_MAP = {
     # Net new followers on that day. Named follower_count by Meta, which reads like a
     # total but is a delta — mapped to follows_gained so the column name cannot mislead.
     "follower_count": "follows_gained",
+    "followers_gained": "follows_gained",
     # Threads. `reposts` is the closest thing Threads has to a share; `quotes` is
     # deliberately unmapped rather than folded in, for the same reason worker/metrics.py
     # keeps them apart — summing them would inflate a number that means something else.
@@ -248,6 +249,93 @@ def sync_instagram_account(conn, config, client, channel, now, budget, logger=No
     return {"days": len(written)}
 
 
+def sync_zernio_instagram_account(conn, config, client, channel, now, budget, logger=None) -> dict:
+    """Sync Zernio's daily follower history and account-level Instagram insights."""
+    account_id = channel["zernio_account_id"]
+    if not account_id:
+        raise ValueError("Zernio Instagram account ID is missing.")
+    has_history = conn.execute(
+        "SELECT 1 FROM account_metrics WHERE channel_id = ? LIMIT 1", (channel["id"],)
+    ).fetchone() is not None
+    span = min(89, max(1, int(
+        config.account_series_window_days if has_history else config.account_backfill_days
+    )))
+    today = day_of(now)
+    start = (now - timedelta(days=span - 1)).strftime("%Y-%m-%d")
+    fetched_at = now.isoformat()
+    written: set[str] = set()
+
+    # Zernio's dedicated endpoint provides daily follower counts and gained/lost deltas.
+    if not budget.exhausted(client):
+        budget.spend()
+        history = client.get_instagram_follower_history(
+            account_id=account_id,
+            metrics="follower_count,followers_gained,followers_lost",
+            from_date=start, to_date=today, metric_type="time_series",
+        )
+        by_day: dict[str, dict] = {}
+        for metric, payload in (history.get("metrics") or {}).items():
+            if not isinstance(payload, dict):
+                continue
+            for point in payload.get("values", []):
+                if not isinstance(point, dict) or point.get("date") is None:
+                    continue
+                day = str(point["date"])[:10]
+                value = point.get("value")
+                column = COLUMN_MAP.get(metric)
+                if value is not None and column:
+                    by_day.setdefault(day, {})[column] = value
+                if value is not None:
+                    by_day.setdefault(day, {})
+        for day, values in by_day.items():
+            upsert_day(conn, channel["id"], day, values,
+                       {"zernio_follower_history": True}, fetched_at)
+            written.add(day)
+        unavailable = history.get("unavailableMetrics") or []
+        if unavailable and logger:
+            names = ",".join(str(item.get("metric", "unknown"))
+                             for item in unavailable if isinstance(item, dict))
+            logger.info("[account_metrics ch %s] Zernio follower metrics unavailable: %s",
+                        channel["id"], names)
+
+    # Reach is the only Instagram account insight Zernio exposes as a daily series.
+    if not budget.exhausted(client):
+        budget.spend()
+        reach = client.get_instagram_account_insights(
+            account_id=account_id, metrics="reach", from_date=start, to_date=today,
+            metric_type="time_series",
+        )
+        reach_payload = (reach.get("metrics") or {}).get("reach") or {}
+        for point in reach_payload.get("values", []):
+            if not isinstance(point, dict) or point.get("date") is None or point.get("value") is None:
+                continue
+            day = str(point["date"])[:10]
+            upsert_day(conn, channel["id"], day, {"reach": point["value"]},
+                       {"zernio_account_reach": True}, fetched_at)
+            written.add(day)
+
+    # Remaining account metrics are totals, not daily series. Read today and yesterday.
+    total_metrics = [metric for metric in _split(config.ig_account_total_metrics)
+                     if metric not in ("reach", "follower_count")]
+    for day in (today, _shift_day(today, -1)):
+        if not total_metrics or budget.exhausted(client):
+            break
+        budget.spend()
+        totals = client.get_instagram_account_insights(
+            account_id=account_id, metrics=",".join(total_metrics),
+            from_date=day, to_date=day, metric_type="total_value",
+        )
+        values = {}
+        raw_metrics = totals.get("metrics") or {}
+        for metric, payload in raw_metrics.items():
+            if isinstance(payload, dict) and payload.get("total") is not None:
+                values.update(_to_columns({metric: payload["total"]}))
+        upsert_day(conn, channel["id"], day, values,
+                   {"zernio_account_totals": raw_metrics}, fetched_at)
+        written.add(day)
+    return {"days": len(written)}
+
+
 def _day_from_end_time(end_time: str | None) -> str | None:
     """Which calendar day a series point describes.
 
@@ -407,14 +495,26 @@ def sync_demographics(conn, config, client, channel, now, budget, logger=None) -
     day, fetched_at = day_of(now), now.isoformat()
     platform = channel["platform"]
     if platform == "instagram":
-        pairs = [
-            (metric, breakdown)
-            for metric in _split(config.ig_demographic_metrics)
-            for breakdown in _split(config.ig_demographic_breakdowns)
-        ]
-        fetch = lambda m, b: client.get_audience_demographics(  # noqa: E731
-            channel["remote_account_id"], channel["access_token"], m, b
-        )
+        if channel["zernio_account_id"]:
+            supported = {"follower_demographics", "engaged_audience_demographics"}
+            pairs = [
+                (metric, breakdown)
+                for metric in _split(config.ig_demographic_metrics)
+                if metric in supported
+                for breakdown in _split(config.ig_demographic_breakdowns)
+            ]
+            fetch = lambda m, b: client.get_instagram_demographics(  # noqa: E731
+                account_id=channel["zernio_account_id"], metric=m, breakdown=b,
+            )
+        else:
+            pairs = [
+                (metric, breakdown)
+                for metric in _split(config.ig_demographic_metrics)
+                for breakdown in _split(config.ig_demographic_breakdowns)
+            ]
+            fetch = lambda m, b: client.get_audience_demographics(  # noqa: E731
+                channel["remote_account_id"], channel["access_token"], m, b
+            )
     else:
         pairs = [
             ("follower_demographics", breakdown)
@@ -496,8 +596,9 @@ def run_account_metrics(conn, config, client=None, now=None, logger=None,
     synced = 0
 
     for channel in rows:
-        sync = _ACCOUNT_SYNCS.get(channel["platform"])
-        if sync is None or not channel["access_token"] or not channel["remote_account_id"]:
+        is_zernio = bool(channel["platform"] == "instagram" and channel["zernio_account_id"])
+        sync = sync_zernio_instagram_account if is_zernio else _ACCOUNT_SYNCS.get(channel["platform"])
+        if sync is None or (not is_zernio and (not channel["access_token"] or not channel["remote_account_id"])):
             continue
         forced = bool(channel["insights_refresh_requested"])
         if not _due(channel["insights_synced_at"], now, config.insights_sync_interval_hours,
@@ -510,7 +611,11 @@ def run_account_metrics(conn, config, client=None, now=None, logger=None,
             # disagree), and this loop's whole contract is that one bad channel must not
             # stop the rest. It sat outside for as long as every platform with a sync
             # also had a client — which stopped being true the moment Facebook got one.
-            client_obj = pick_client(channel)
+            if is_zernio:
+                from .zernio_client import ZernioClient
+                client_obj = ZernioClient()
+            else:
+                client_obj = pick_client(channel)
             sync(conn, config, client_obj, channel, now, budget, logger=logger)
             # Demographics move slowly and cost twelve calls, so they keep their own,
             # slower clock rather than riding this one.
