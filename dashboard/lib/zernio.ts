@@ -101,8 +101,13 @@ export async function getInstagramAccount(profileId: string, accountId: string) 
   const account = accounts.find((item) => {
     if (!item || typeof item !== "object") return false;
     const row = item as Record<string, unknown>;
+    const rawProfile = row.profileId;
+    const rowProfileId = typeof rawProfile === "string" ? rawProfile :
+      rawProfile && typeof rawProfile === "object"
+        ? String((rawProfile as Record<string, unknown>)._id || (rawProfile as Record<string, unknown>).id || "")
+        : "";
     return (row._id === accountId || row.accountId === accountId) &&
-      row.platform === "instagram" && row.profileId === profileId && row.isActive !== false;
+      row.platform === "instagram" && rowProfileId === profileId && row.isActive !== false;
   }) as Record<string, unknown> | undefined;
   if (!account) throw new ZernioApiError("The Instagram account was not found in the expected Zernio profile.");
   return {
