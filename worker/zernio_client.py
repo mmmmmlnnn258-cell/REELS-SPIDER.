@@ -186,6 +186,93 @@ class ZernioClient:
             raise ZernioError("Zernio confirmed publication without returning a post ID.")
         return {"remote_post_id": remote_id, "zernio_post_id": str(post.get("_id") or ""), "status": status}
 
+    def list_inbox_conversations(self, *, account_id: str, limit: int = 50,
+                                 updated_since: str | None = None) -> list[dict]:
+        """List Instagram conversations stored by Zernio for one connected account."""
+        if not account_id:
+            raise ZernioError("A Zernio account ID is required.")
+        params = {"platform": "instagram", "accountId": account_id, "limit": min(max(int(limit), 1), 100)}
+        if updated_since:
+            params["updatedSince"] = updated_since
+        payload = self._request("GET", "/inbox/conversations", params=params)
+        rows = payload.get("data", [])
+        if not isinstance(rows, list):
+            raise ZernioError("Zernio returned an invalid conversations list.")
+        return [row for row in rows if isinstance(row, dict)]
+
+    def list_inbox_messages(self, conversation_id: str, *, account_id: str,
+                            limit: int = 50, sort_order: str = "desc") -> list[dict]:
+        """Fetch one conversation's messages; IDs are opaque and URL-escaped."""
+        from urllib.parse import quote
+
+        if not conversation_id or not account_id:
+            raise ZernioError("A conversation ID and Zernio account ID are required.")
+        if sort_order not in ("asc", "desc"):
+            raise ZernioError("Invalid inbox message sort order.")
+        path = f"/inbox/conversations/{quote(conversation_id, safe='')}/messages"
+        payload = self._request("GET", path, params={
+            "accountId": account_id,
+            "limit": min(max(int(limit), 1), 100),
+            "sortOrder": sort_order,
+        })
+        rows = payload.get("messages", [])
+        if not isinstance(rows, list):
+            raise ZernioError("Zernio returned an invalid messages list.")
+        return [row for row in rows if isinstance(row, dict)]
+
+    def send_inbox_message(self, conversation_id: str, *, account_id: str,
+                           message: str, idempotency_key: str) -> dict:
+        """Send a human-approved reply. Callers must confirm the 24-hour window."""
+        from urllib.parse import quote
+
+        if not conversation_id or not account_id or not message.strip():
+            raise ZernioError("A conversation, account and non-empty message are required.")
+        if not idempotency_key:
+            raise ZernioError("An idempotency key is required for inbox sends.")
+        path = f"/inbox/conversations/{quote(conversation_id, safe='')}/messages"
+        payload = self._request("POST", path, json={
+            "accountId": account_id,
+            "message": message,
+        }, headers={"Idempotency-Key": idempotency_key})
+        if not isinstance(payload.get("message"), dict) and not payload.get("success"):
+            raise ZernioError("Zernio did not confirm the inbox message result.")
+        return payload
+
+    def list_comment_automations(self, *, profile_id: str) -> list[dict]:
+        if not profile_id:
+            raise ZernioError("A Zernio profile ID is required.")
+        payload = self._request("GET", "/comment-automations", params={"profileId": profile_id})
+        rows = payload.get("automations", [])
+        if not isinstance(rows, list):
+            raise ZernioError("Zernio returned an invalid comment automations list.")
+        return [row for row in rows if isinstance(row, dict)]
+
+    def create_comment_automation(self, body: dict, *, idempotency_key: str) -> dict:
+        if not isinstance(body, dict) or not body.get("accountId") or not body.get("profileId"):
+            raise ZernioError("A profile ID and account ID are required for comment automation.")
+        if not body.get("name") or "dmMessage" not in body:
+            raise ZernioError("A name and DM reply are required for Instagram comment automation.")
+        if not idempotency_key:
+            raise ZernioError("An idempotency key is required for comment automation creation.")
+        payload = self._request("POST", "/comment-automations", json=body,
+                                headers={"Idempotency-Key": idempotency_key})
+        automation = payload.get("automation")
+        if not isinstance(automation, dict) or not automation.get("id"):
+            raise ZernioError("Zernio did not return a comment automation ID.")
+        return automation
+
+    def update_comment_automation(self, automation_id: str, body: dict) -> dict:
+        from urllib.parse import quote
+
+        if not automation_id or not isinstance(body, dict):
+            raise ZernioError("A comment automation ID and update body are required.")
+        path = f"/comment-automations/{quote(automation_id, safe='')}"
+        payload = self._request("PATCH", path, json=body)
+        automation = payload.get("automation")
+        if not isinstance(automation, dict):
+            raise ZernioError("Zernio did not return the updated automation.")
+        return automation
+
     def list_accounts(self, *, profile_id: str) -> list[dict]:
         if not profile_id:
             raise ZernioError("A Zernio profile ID is required.")
