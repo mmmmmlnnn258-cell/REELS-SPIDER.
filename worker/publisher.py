@@ -375,7 +375,7 @@ def _validate(post, assets, dry_run: bool, asset_base_url: str | None, platform:
     # about duration, and by then the send has already read "scheduled" to the owner.
     # This covers feed and reel (the story surface returns above before reaching here).
     _check_media_limits(assets, platform, surface)
-    _validate_media_available(assets, dry_run, asset_base_url, caps, config, surface)
+    _validate_media_available(assets, dry_run, asset_base_url, caps, config, surface, zernio_mode)
 
 
 def _validate_media_available(assets, dry_run: bool, asset_base_url: str | None,
