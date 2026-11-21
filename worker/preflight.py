@@ -123,6 +123,27 @@ def check_channels(rows, registry: ClientRegistry, *, print_fn=print) -> bool:
     all_ok = True
     for ch in rows:
         name = f"#{ch['id']} {ch['account_name']} ({ch['platform']})"
+        if "zernio_account_id" in ch.keys() and ch["zernio_account_id"]:
+            try:
+                profile_id = ch["zernio_profile_id"]
+                if not profile_id:
+                    raise RuntimeError("Zernio profile ID is missing")
+                from .zernio_client import ZernioClient
+                accounts = ZernioClient().list_accounts(profile_id=profile_id)
+                connected = any(
+                    (row.get("_id") == ch["zernio_account_id"] or row.get("accountId") == ch["zernio_account_id"])
+                    and row.get("platform") == "instagram"
+                    for row in accounts
+                )
+                if connected:
+                    print_fn(f"  ✓ {name}: Zernio Instagram account reachable")
+                else:
+                    print_fn(f"  ✗ {name}: Instagram account is missing or disconnected in Zernio")
+                    all_ok = False
+            except Exception as exc:  # noqa: BLE001 — redact provider/network details
+                print_fn(f"  ✗ {name}: {redact(str(exc))}")
+                all_ok = False
+            continue
         if not ch["access_token"]:
             print_fn(f"  ✗ {name}: no access token set")
             all_ok = False
