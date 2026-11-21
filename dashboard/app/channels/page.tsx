@@ -144,7 +144,7 @@ export default async function ChannelsPage({
         {params.zernio_connected === "1" ? (
           <div className="rounded-card border border-status-posted bg-surface-muted p-4 text-sm text-ink-soft">
             <span className="font-medium text-ink">Instagram authorized through Zernio.</span>{" "}
-            @{params.zernio_account || "account"} was linked to the existing channel. Publishing, comment automation and inbox adapters are implemented but have not been live-tested.
+            @{params.zernio_account || "account"} was added to the BLACK SPIDER account list. Publishing, comment automation and inbox adapters are implemented but have not been live-tested.
           </div>
         ) : null}
         {params.zernio_error ? (
