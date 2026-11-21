@@ -890,17 +890,17 @@ def test_zernio_dm_channel_access_requires_owner_and_selected_account(conn):
 
 
 def test_zernio_dm_legacy_numeric_callback_cannot_open_another_users_account(conn, config):
-    conn.execute(
+    channel_id = conn.execute(
         """INSERT INTO channels
            (platform, account_name, zernio_account_id, zernio_profile_id,
             zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
            VALUES ('instagram', 'other', 'z-other-dm', 'p-1', '999', '999', 1)"""
-    )
+    ).lastrowid
     conn.commit()
     client = FakeTelegram()
     assert process_control_update(
         conn, cfg(config), client,
-        callback(data="bs:dm:view:1:thread-secret"), graph_client_for=None,
+        callback(data=f"bs:dm:view:{channel_id}:thread-secret"), graph_client_for=None,
     )
     assert "لا تملك صلاحية فتح هذه المحادثة" in client.messages[0][1]
 
