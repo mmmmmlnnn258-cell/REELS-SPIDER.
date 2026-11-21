@@ -1413,7 +1413,11 @@ def publish_one(
             status="posted", remote_post_id=result["remote_post_id"],
             published_at=_iso(now), last_error=None, next_retry_at=None,
             updated_at=_iso(now),
-            first_comment_status="none",
+            # Zernio accepts firstComment with the post, but does not return a
+            # separate comment receipt. "pending" is honest; "posted" would overclaim.
+            first_comment_status="pending" if plan["first_comment"] else "none",
+            first_comment_error=None,
+            first_comment_remote_id=None,
         )
         if post["content_kind"] == "one_time":
             _maybe_retire_one_time(conn, post["id"], now)
