@@ -274,6 +274,7 @@ def sync_zernio_instagram_account(conn, config, client, channel, now, budget, lo
             from_date=start, to_date=today, metric_type="time_series",
         )
         by_day: dict[str, dict] = {}
+        raw_by_day: dict[str, dict] = {}
         for metric, payload in (history.get("metrics") or {}).items():
             if not isinstance(payload, dict):
                 continue
@@ -282,14 +283,15 @@ def sync_zernio_instagram_account(conn, config, client, channel, now, budget, lo
                     continue
                 day = str(point["date"])[:10]
                 value = point.get("value")
-                column = COLUMN_MAP.get(metric)
+                column = ("followers_count" if metric == "follower_count"
+                          else COLUMN_MAP.get(metric))
                 if value is not None and column:
                     by_day.setdefault(day, {})[column] = value
                 if value is not None:
-                    by_day.setdefault(day, {})
+                    raw_by_day.setdefault(day, {})[metric] = value
         for day, values in by_day.items():
             upsert_day(conn, channel["id"], day, values,
-                       {"zernio_follower_history": True}, fetched_at)
+                       {"zernio_follower_history": raw_by_day.get(day, {})}, fetched_at)
             written.add(day)
         unavailable = history.get("unavailableMetrics") or []
         if unavailable and logger:
