@@ -283,6 +283,29 @@ class ZernioClient:
             raise ZernioError("Zernio did not return a comment automation ID.")
         return automation
 
+    def list_comment_automation_logs(self, automation_id: str, *,
+                                      limit: int = 10, skip: int = 0) -> dict:
+        from urllib.parse import quote
+
+        if not automation_id:
+            raise ZernioError("A comment automation ID is required.")
+        safe_limit = min(max(int(limit), 1), 200)
+        safe_skip = max(int(skip), 0)
+        path = f"/comment-automations/{quote(automation_id, safe='')}/logs"
+        payload = self._request("GET", path, params={
+            "limit": safe_limit,
+            "skip": safe_skip,
+        })
+        logs = payload.get("logs", [])
+        misses = payload.get("misses", {})
+        if not isinstance(logs, list) or not isinstance(misses, dict):
+            raise ZernioError("Zernio returned an invalid comment automation log.")
+        return {
+            "logs": [row for row in logs if isinstance(row, dict)],
+            "misses": misses,
+            "pagination": payload.get("pagination") or {},
+        }
+
     def update_comment_automation(self, automation_id: str, body: dict) -> dict:
         from urllib.parse import quote
 
