@@ -601,7 +601,7 @@ def test_add_account_callback_creates_channel_free_instagram_ticket(conn, config
     assert "channel_id" not in row.keys()
     keyboard = client.messages[0][2]["inline_keyboard"]
     assert keyboard[0][0]["url"].startswith(
-        "https://dashboard.example.test/api/channels/instagram/telegram?ticket="
+        "https://dashboard.example.test/api/channels/instagram/zernio/telegram?ticket="
     )
 
 
