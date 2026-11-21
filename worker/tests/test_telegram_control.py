@@ -2,7 +2,10 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from worker.telegram_control import (\n    process_control_update, _zernio_dm_window,\n    _connected_ig_channels, _telegram_can_access_comment_rule,\n)
+from worker.telegram_control import (
+    process_control_update, _zernio_dm_window,
+    _connected_ig_channels, _telegram_can_access_comment_rule,
+)
 
 
 class FakeTelegram:
