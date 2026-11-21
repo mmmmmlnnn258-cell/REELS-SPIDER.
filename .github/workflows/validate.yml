@@ -3,6 +3,7 @@ name: Validate project
 on:
   push:
     branches:
+      - main
       - feature/instagram-comment-dm
       - feature/telegram-video-ingest
       - feature/black-spider-full-control
