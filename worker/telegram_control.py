@@ -326,10 +326,10 @@ def _comment_live_list(conn, client, graph_client_for, token, chat_id, rule_id):
                 username = (
                     author.get("username") if isinstance(author, dict) else author
                 ) or item.get("username") or item.get("authorName") or "مستخدم"
-                lines.append(f"\\n{username}: {str(item.get('text') or '[تعليق بلا نص]')[:500]}")
+                lines.append(f"\n{username}: {str(item.get('text') or '[تعليق بلا نص]')[:500]}")
             if not comments:
                 lines.append("لا توجد تعليقات ظاهرة.")
-            _send(client, token, chat_id, "\\n".join(lines)[:3900], {"inline_keyboard":[[
+            _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[[
                 {"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{rule_id}"}
             ]]})
             return
@@ -341,10 +341,10 @@ def _comment_live_list(conn, client, graph_client_for, token, chat_id, rule_id):
         lines = [f"💬 أحدث التعليقات للقاعدة #{rule_id}:"]
         for item in comments[:12]:
             author = (item.get("from") or {}).get("username") or item.get("username") or "مستخدم"
-            lines.append(f"\\n{author}: {str(item.get('text') or '[تعليق بلا نص]')[:500]}")
+            lines.append(f"\n{author}: {str(item.get('text') or '[تعليق بلا نص]')[:500]}")
         if not comments:
             lines.append("لا توجد تعليقات ظاهرة.")
-        _send(client, token, chat_id, "\\n".join(lines)[:3900], {"inline_keyboard":[[
+        _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[[
             {"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{rule_id}"}
         ]]})
     except Exception as exc:
@@ -354,7 +354,7 @@ def _comment_live_list(conn, client, graph_client_for, token, chat_id, rule_id):
             if row["zernio_account_id"] else
             _comment_permission_hint(row, graph) if graph is not None else "تعذر تهيئة عميل Meta."
         )
-        _send(client, token, chat_id, f"تعذر جلب التعليقات: {redact(str(exc))[:400]}\\n{hint}", _menu())
+        _send(client, token, chat_id, f"تعذر جلب التعليقات: {redact(str(exc))[:400]}\n{hint}", _menu())
 
 
 def _dm_list(conn, client, graph_client_for, token, chat_id):
