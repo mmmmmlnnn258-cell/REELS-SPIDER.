@@ -32,7 +32,7 @@ def database():
       CREATE TABLE instagram_comment_rules(id INTEGER PRIMARY KEY, channel_id INTEGER,
         media_id TEXT, keywords_json TEXT, link_url TEXT, private_reply_text TEXT,
         public_reply_text TEXT, enabled INTEGER, last_polled_at TEXT, last_error TEXT,
-        zernio_automation_id TEXT, zernio_config_hash TEXT);
+        zernio_automation_id TEXT, zernio_config_hash TEXT, zernio_media_id TEXT);
       CREATE TABLE instagram_comment_events(comment_id TEXT PRIMARY KEY, rule_id INTEGER,
         channel_id INTEGER, media_id TEXT, comment_text TEXT, status TEXT,
         private_reply_id TEXT, public_reply_id TEXT, last_error TEXT,
