@@ -279,6 +279,25 @@ def _selected_zernio_channel_id(conn, chat_id, sender_id):
     return channel_id if owned else -1
 
 
+def _telegram_can_access_comment_rule(conn, rule_id, chat_id, sender_id):
+    row = conn.execute(
+        """SELECT c.id, c.zernio_account_id, c.zernio_telegram_chat_id,
+                  c.zernio_telegram_user_id
+             FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id
+            WHERE r.id=? AND c.platform='instagram' AND c.is_active=1""",
+        (int(rule_id),),
+    ).fetchone()
+    if row is None:
+        return False
+    if not row["zernio_account_id"]:
+        return True
+    if (str(row["zernio_telegram_chat_id"] or "") != str(chat_id)
+            or str(row["zernio_telegram_user_id"] or "") != str(sender_id)):
+        return False
+    selected_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
+    return selected_id is None or selected_id == int(row["id"])
+
+
 def _connected_ig_channels(conn, chat_id=None, sender_id=None):
     rows = conn.execute("""SELECT id, platform, account_name, remote_account_id, linked_page_id, access_token,
                instagram_auth_method, zernio_account_id, zernio_profile_id
@@ -579,6 +598,14 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             return True
         if query_id:
             client.answer_callback_query(token, query_id)
+        if data.startswith("bs:comment:"):
+            parts = data.split(":")
+            rule_part = parts[3] if len(parts) >= 4 and parts[2] in {"edit", "fetch", "detail", "logs"} else (parts[2] if len(parts) >= 3 else "")
+            if rule_part.isdigit() and not _telegram_can_access_comment_rule(
+                conn, int(rule_part), chat_id, sender_id
+            ):
+                _send(client, token, chat_id, "لا تملك صلاحية إدارة هذه القاعدة أو أن الحساب المختار مختلف.", _menu())
+                return True
         if data == "bs:menu":
             with conn:
                 conn.execute("DELETE FROM telegram_schedule_sessions WHERE chat_id=?", (chat_id,))
