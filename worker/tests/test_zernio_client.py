@@ -120,3 +120,58 @@ def test_upload_media_uses_presigned_put_without_api_key(tmp_path):
     assert session.calls[1][0] == "PUT"
     assert "Authorization" not in session.calls[1][2]["headers"]
     assert session.calls[1][2]["headers"]["Content-Type"] == "image/jpeg"
+
+
+def test_list_inbox_conversations_is_scoped_to_instagram_account():
+    session = Session([Response(payload={"data": [{"id": "thread-1", "platform": "instagram"}]})])
+    client = ZernioClient("private-key", session=session)
+    rows = client.list_inbox_conversations(account_id="ig-account", updated_since="2026-11-20T10:00:00Z")
+    assert rows[0]["id"] == "thread-1"
+    assert session.calls[0][1].endswith("/inbox/conversations")
+    assert session.calls[0][2]["params"]["accountId"] == "ig-account"
+    assert session.calls[0][2]["params"]["platform"] == "instagram"
+    assert session.calls[0][2]["params"]["updatedSince"] == "2026-11-20T10:00:00Z"
+
+
+def test_list_inbox_messages_quotes_opaque_conversation_id():
+    session = Session([Response(payload={"messages": [{"id": "m1", "direction": "incoming"}]})])
+    client = ZernioClient("private-key", session=session)
+    rows = client.list_inbox_messages("thread/with space", account_id="ig-account")
+    assert rows[0]["id"] == "m1"
+    assert "/thread%2Fwith%20space/messages" in session.calls[0][1]
+    assert session.calls[0][2]["params"]["accountId"] == "ig-account"
+
+
+def test_send_inbox_message_requires_idempotency_and_uses_bearer():
+    session = Session([Response(payload={"success": True, "message": {"id": "sent-1"}})])
+    client = ZernioClient("private-key", session=session)
+    result = client.send_inbox_message(
+        "thread-1", account_id="ig-account", message="Hello",
+        idempotency_key="black-spider-human-reply-17",
+    )
+    assert result["message"]["id"] == "sent-1"
+    method, url, kwargs = session.calls[0]
+    assert method == "POST" and url.endswith("/thread-1/messages")
+    assert kwargs["headers"]["Authorization"] == "Bearer private-key"
+    assert kwargs["headers"]["Idempotency-Key"] == "black-spider-human-reply-17"
+    assert kwargs["json"] == {"accountId": "ig-account", "message": "Hello"}
+
+
+def test_create_comment_automation_requires_profile_and_returns_id():
+    session = Session([Response(payload={"success": True, "automation": {"id": "automation-1"}})])
+    client = ZernioClient("private-key", session=session)
+    automation = client.create_comment_automation({
+        "profileId": "profile-1", "accountId": "ig-account",
+        "name": "BLACK SPIDER rule 4", "keywords": ["price"],
+        "dmMessage": "Here is the information", "isActive": False,
+    }, idempotency_key="black-spider-rule-4")
+    assert automation["id"] == "automation-1"
+    assert session.calls[0][1].endswith("/comment-automations")
+    assert session.calls[0][2]["headers"]["Idempotency-Key"] == "black-spider-rule-4"
+
+
+def test_list_comment_automations_is_profile_scoped():
+    session = Session([Response(payload={"automations": [{"id": "automation-1"}]})])
+    client = ZernioClient("private-key", session=session)
+    assert client.list_comment_automations(profile_id="profile-1")[0]["id"] == "automation-1"
+    assert session.calls[0][2]["params"] == {"profileId": "profile-1"}
