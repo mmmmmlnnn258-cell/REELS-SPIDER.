@@ -65,7 +65,7 @@ def test_error_does_not_expose_response_body_or_api_key():
         client.list_profiles()
     assert "private-key" not in str(error.value)
 
-    
+
 def test_create_profile_sends_idempotency_key():
     session = Session([Response(payload={"profile": {"_id": "new-profile"}})])
     client = ZernioClient("private-key", session=session)
