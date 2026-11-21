@@ -1070,16 +1070,21 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                   _menu())
             return True
         if data == "bs:comments":
+            selected_zernio_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
             rows = conn.execute(
                 """SELECT r.id, r.media_id, r.enabled, c.account_name
                      FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id
                     WHERE c.platform='instagram' AND c.is_active=1
                       AND (
-                        (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id)<>'')
-                        OR (c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id)<>''
+                        (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id)<>''
+                         AND c.zernio_telegram_chat_id=? AND c.zernio_telegram_user_id=?
+                         AND (? IS NULL OR c.id=?))
+                        OR (c.zernio_account_id IS NULL
+                            AND c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id)<>''
                             AND c.access_token IS NOT NULL AND TRIM(c.access_token)<>'')
                       )
-                    ORDER BY r.id DESC LIMIT 8"""
+                    ORDER BY r.id DESC LIMIT 8""",
+                (chat_id, sender_id, selected_zernio_id, selected_zernio_id),
             ).fetchall()
             if not rows:
                 _send(client, token, chat_id, "لا توجد قواعد تعليقات مرتبطة بقنوات Instagram نشطة.", _menu())
