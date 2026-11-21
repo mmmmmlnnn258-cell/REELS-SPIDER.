@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
           `INSERT INTO channels
             (platform, account_name, timezone, zernio_account_id, zernio_profile_id,
              zernio_username, is_active, created_at, updated_at)
-           VALUES ('instagram', ?, 'UTC', ?, ?, ?, 1, ?, ?)`,
+           VALUES ('instagram', ?, 'Asia/Aden', ?, ?, ?, 1, ?, ?)`,
         ).run(account.username, accountId, profileId, account.username, now, now);
       }
 
