@@ -157,16 +157,20 @@ class ZernioClient:
         """Create a single-account Instagram post with retry-safe request identity."""
         if not account_id or not media_items:
             raise ZernioError("A connected Instagram account and at least one media item are required.")
+        platform = {"platform": "instagram", "accountId": account_id}
+        platform_data = {}
+        if content_type == "story":
+            platform_data["contentType"] = "story"
+        if first_comment and content_type != "story":
+            platform_data["firstComment"] = first_comment
+        if platform_data:
+            platform["platformSpecificData"] = platform_data
         body = {
             "content": content or "",
             "mediaItems": media_items,
-            "platforms": [{"platform": "instagram", "accountId": account_id}],
+            "platforms": [platform],
             "publishNow": True,
         }
-        if content_type in ("reel", "story"):
-            body["contentType"] = content_type
-        if first_comment and content_type != "story":
-            body["firstComment"] = first_comment
         payload = self._request("POST", "/posts", json=body, headers={"Idempotency-Key": idempotency_key})
         post = payload.get("post")
         if not isinstance(post, dict):
@@ -181,9 +185,9 @@ class ZernioClient:
             raise ZernioError("Zernio did not confirm publication" + (f": {str(reason)[:240]}" if reason else "."))
         remote_id = result.get("platformPostId") or result.get("postId")
         if not isinstance(remote_id, str) or not remote_id:
-            remote_id = post.get("_id")
+            remote_id = result.get("platformPostUrl")
         if not isinstance(remote_id, str) or not remote_id:
-            raise ZernioError("Zernio confirmed publication without returning a post ID.")
+            raise ZernioError("Zernio confirmed publication without returning a platform post ID or URL.")
         return {"remote_post_id": remote_id, "zernio_post_id": str(post.get("_id") or ""), "status": status}
 
     def list_inbox_conversations(self, *, account_id: str, limit: int = 50,
