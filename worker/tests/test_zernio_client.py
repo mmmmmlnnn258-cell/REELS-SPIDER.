@@ -200,3 +200,13 @@ def test_story_content_type_is_nested_in_instagram_platform_data():
     body = session.calls[0][2]["json"]
     assert body["platforms"][0]["platformSpecificData"] == {"contentType": "story"}
     assert "contentType" not in body
+
+
+def test_list_post_comments_is_scoped_to_zernio_instagram_account():
+    session = Session([Response(payload={"comments": [{"id": "comment-1", "text": "Hello"}]})])
+    client = ZernioClient("private-key", session=session)
+    rows = client.list_post_comments("media-1", account_id="ig-account-1")
+    assert rows[0]["id"] == "comment-1"
+    assert session.calls[0][1].endswith("/inbox/comments/media-1")
+    assert session.calls[0][2]["params"]["accountId"] == "ig-account-1"
+    assert session.calls[0][2]["params"]["platform"] == "instagram"
