@@ -222,3 +222,37 @@ def test_list_comment_automation_logs_returns_delivery_and_keyword_miss_data():
     assert result["misses"]["total"] == 3
     assert session.calls[0][1].endswith("/comment-automations/automation-1/logs")
     assert session.calls[0][2]["params"] == {"limit": 10, "skip": 0}
+
+def test_list_analytics_posts_filters_by_instagram_account_and_pages():
+    session = Session([Response(payload={
+        "posts": [{"postId": "post-1"}],
+        "pagination": {"page": 1, "totalPages": 2},
+    })])
+    client = ZernioClient("private-key", session=session)
+    posts, next_page = client.list_analytics_posts(
+        account_id="account-1", page=1, limit=25,
+        from_date="2025-11-21", to_date="2026-11-21",
+    )
+    assert posts == [{"postId": "post-1"}]
+    assert next_page == "2"
+    assert session.calls[0][1].endswith("/analytics")
+    assert session.calls[0][2]["params"] == {
+        "platform": "instagram", "accountId": "account-1",
+        "source": "all", "limit": 25, "page": 1,
+        "fromDate": "2025-11-21", "toDate": "2026-11-21",
+    }
+
+
+def test_get_post_analytics_selects_the_requested_account():
+    session = Session([Response(payload={
+        "platformAnalytics": [
+            {"platform": "instagram", "accountId": "other", "analytics": {"likes": 999}},
+            {"platform": "instagram", "accountId": "account-1", "analytics": {"likes": 12, "reach": 80}},
+        ]
+    })])
+    client = ZernioClient("private-key", session=session)
+    result = client.get_post_analytics("media-1", account_id="account-1")
+    assert result == {"likes": 12, "reach": 80}
+    assert session.calls[0][2]["params"] == {
+        "postId": "media-1", "platform": "instagram", "accountId": "account-1"
+    }
