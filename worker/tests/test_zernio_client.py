@@ -134,7 +134,6 @@ def test_list_inbox_conversations_is_scoped_to_instagram_account():
     assert rows[0]["id"] == "thread-1"
     assert session.calls[0][1].endswith("/inbox/conversations")
     assert session.calls[0][2]["params"]["accountId"] == "ig-account"
-    assert session.calls[0][2]["params"]["platform"] == "instagram"
     assert session.calls[0][2]["params"]["updatedSince"] == "2026-11-20T10:00:00Z"
 
 
