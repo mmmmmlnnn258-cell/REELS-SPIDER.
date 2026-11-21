@@ -407,7 +407,7 @@ def test_zernio_linked_instagram_uses_zernio_without_graph(monkeypatch, conn, co
 
     out = publish_one(conn, pub, config, fake_client, dry_run=False, now=NOW)
 
-    assert out.result == "posted"
+    assert out.result == "posted", out.detail
     assert out.detail == "instagram-post-123"
     assert fake_client.calls == []
     row = _reload(conn, pub["id"])
