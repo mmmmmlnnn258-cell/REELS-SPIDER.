@@ -85,7 +85,7 @@ def test_comment_rule_toggle_changes_only_selected_active_instagram_rule(conn, c
                                    callback(data=f"bs:comment:{rule_id}"))
     assert conn.execute("SELECT enabled FROM instagram_comment_rules WHERE id=?",
                         (rule_id,)).fetchone()[0] == 1
-    assert "تم تشغيل" in client.messages[0][1]
+    assert "تم حفظ حالة القاعدة محلياً" in client.messages[0][1]
 
 
 def test_start_without_allowlist_preserves_chat_id_discovery(conn, config):
