@@ -274,8 +274,10 @@ def _connected_ig_channels(conn):
 def _comment_rule_detail(conn, client, token, chat_id, rule_id):
     row = conn.execute("""SELECT r.*, c.account_name FROM instagram_comment_rules r
         JOIN channels c ON c.id=r.channel_id WHERE r.id=? AND c.platform='instagram'
-        AND c.is_active=1 AND c.remote_account_id IS NOT NULL
-        AND c.access_token IS NOT NULL""", (rule_id,)).fetchone()
+        AND c.is_active=1 AND (
+          (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id)<>'')
+          OR (c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL)
+        )""", (rule_id,)).fetchone()
     if row is None:
         _send(client, token, chat_id, "قاعدة التعليقات غير موجودة أو القناة غير متصلة.", _menu())
         return
@@ -301,29 +303,59 @@ def _comment_rule_detail(conn, client, token, chat_id, rule_id):
 
 def _comment_live_list(conn, client, graph_client_for, token, chat_id, rule_id):
     row = conn.execute("""SELECT r.media_id,c.id,c.platform,c.remote_account_id,c.linked_page_id,
-               c.access_token,c.instagram_auth_method
+               c.access_token,c.instagram_auth_method,c.zernio_account_id
         FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id
         WHERE r.id=? AND c.platform='instagram' AND c.is_active=1
-          AND c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL""",
-        (rule_id,)).fetchone()
-    if row is None or graph_client_for is None:
-        _send(client, token, chat_id, "القاعدة غير متاحة أو عميل Meta غير جاهز.", _menu())
+          AND (
+            (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id)<>'')
+            OR (c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL)
+          )""", (rule_id,)).fetchone()
+    if row is None:
+        _send(client, token, chat_id, "القاعدة غير متاحة أو القناة غير متصلة.", _menu())
         return
     graph = None
     try:
+        if row["zernio_account_id"]:
+            from .zernio_client import ZernioClient
+            comments = ZernioClient().list_post_comments(
+                str(row["media_id"]), account_id=row["zernio_account_id"], limit=25
+            )
+            lines = [f"💬 أحدث التعليقات للقاعدة #{rule_id} عبر Zernio:"]
+            for item in comments[:12]:
+                author = item.get("author") or {}
+                username = (
+                    author.get("username") if isinstance(author, dict) else author
+                ) or item.get("username") or item.get("authorName") or "مستخدم"
+                lines.append(f"\\n{username}: {str(item.get('text') or '[تعليق بلا نص]')[:500]}")
+            if not comments:
+                lines.append("لا توجد تعليقات ظاهرة.")
+            _send(client, token, chat_id, "\\n".join(lines)[:3900], {"inline_keyboard":[[
+                {"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{rule_id}"}
+            ]]})
+            return
+
+        if graph_client_for is None:
+            raise RuntimeError("Meta client is not configured for this legacy channel.")
         graph = graph_client_for(row)
         comments, _ = graph.get_media_comments(str(row["media_id"]), row["access_token"], limit=25)
         lines = [f"💬 أحدث التعليقات للقاعدة #{rule_id}:"]
         for item in comments[:12]:
             author = (item.get("from") or {}).get("username") or item.get("username") or "مستخدم"
-            lines.append(f"\n{author}: {str(item.get('text') or '[تعليق بلا نص]')[:500]}")
+            lines.append(f"\\n{author}: {str(item.get('text') or '[تعليق بلا نص]')[:500]}")
         if not comments:
             lines.append("لا توجد تعليقات ظاهرة.")
-        _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[[{"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{rule_id}"}]]})
+        _send(client, token, chat_id, "\\n".join(lines)[:3900], {"inline_keyboard":[[
+            {"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{rule_id}"}
+        ]]})
     except Exception as exc:
         from .redact import redact
-        hint = _comment_permission_hint(row, graph) if graph is not None else "تعذر تهيئة عميل Meta."
-        _send(client, token, chat_id, f"تعذر جلب التعليقات من Meta: {redact(str(exc))[:400]}\n{hint}", _menu())
+        hint = (
+            "تعذر الاتصال بخدمة Zernio؛ تحقق من ZERNIO_API_KEY وصلاحية التعليقات."
+            if row["zernio_account_id"] else
+            _comment_permission_hint(row, graph) if graph is not None else "تعذر تهيئة عميل Meta."
+        )
+        _send(client, token, chat_id, f"تعذر جلب التعليقات: {redact(str(exc))[:400]}\\n{hint}", _menu())
+
 
 def _dm_list(conn, client, graph_client_for, token, chat_id):
     channels = _connected_ig_channels(conn)
@@ -948,8 +980,11 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 """SELECT r.id, r.media_id, r.enabled, c.account_name
                      FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id
                     WHERE c.platform='instagram' AND c.is_active=1
-                      AND c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id)<>''
-                      AND c.access_token IS NOT NULL AND TRIM(c.access_token)<>''
+                      AND (
+                        (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id)<>'')
+                        OR (c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id)<>''
+                            AND c.access_token IS NOT NULL AND TRIM(c.access_token)<>'')
+                      )
                     ORDER BY r.id DESC LIMIT 8"""
             ).fetchall()
             if not rows:
@@ -1171,7 +1206,10 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 field = "public_reply_text" if parts[4] == "public" else "private_reply_text"
                 valid = conn.execute("""SELECT 1 FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id
                     WHERE r.id=? AND c.platform='instagram' AND c.is_active=1
-                    AND c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL""", (int(parts[3]),)).fetchone()
+                    AND (
+                      (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id)<>'')
+                      OR (c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL)
+                    )""", (int(parts[3]),)).fetchone()
                 if not valid:
                     _send(client, token, chat_id, "القاعدة غير موجودة أو القناة غير متصلة.", _menu())
                 else:
@@ -1206,8 +1244,11 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 """SELECT r.enabled FROM instagram_comment_rules r
                      JOIN channels c ON c.id=r.channel_id
                     WHERE r.id=? AND c.platform='instagram' AND c.is_active=1
-                      AND c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id)<>''
-                      AND c.access_token IS NOT NULL AND TRIM(c.access_token)<>''""",
+                      AND (
+                        (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id)<>'')
+                        OR (c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id)<>''
+                            AND c.access_token IS NOT NULL AND TRIM(c.access_token)<>'')
+                      )""",
                 (rule_id,),
             ).fetchone()
             if row is None:
