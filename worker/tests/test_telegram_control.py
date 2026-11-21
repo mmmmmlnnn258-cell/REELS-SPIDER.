@@ -858,6 +858,53 @@ def test_selected_zernio_account_scopes_telegram_inbox_channels(conn):
     assert [int(row["id"]) for row in channels] == [first]
 
 
+def test_zernio_dm_channel_access_requires_owner_and_selected_account(conn):
+    owned = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'owned', 'z-owned-dm', 'p-1',
+                   '7441755677', '7441755677', 1)"""
+    ).lastrowid
+    other = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'other', 'z-other-dm', 'p-1',
+                   '999', '999', 1)"""
+    ).lastrowid
+    conn.commit()
+    from worker.telegram_control import _telegram_can_access_zernio_channel
+    assert _telegram_can_access_zernio_channel(conn, owned, "7441755677", "7441755677")
+    assert not _telegram_can_access_zernio_channel(conn, owned, "7441755677", "999")
+    assert not _telegram_can_access_zernio_channel(conn, other, "7441755677", "7441755677")
+
+    conn.execute(
+        """INSERT INTO telegram_account_preferences
+           (telegram_chat_id, telegram_user_id, selected_zernio_channel_id, updated_at)
+           VALUES ('7441755677', '7441755677', ?, '2026-11-21T00:00:00Z')""",
+        (other,),
+    )
+    conn.commit()
+    assert not _telegram_can_access_zernio_channel(conn, owned, "7441755677", "7441755677")
+
+
+def test_zernio_dm_legacy_numeric_callback_cannot_open_another_users_account(conn, config):
+    conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'other', 'z-other-dm', 'p-1', '999', '999', 1)"""
+    )
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), client,
+        callback(data="bs:dm:view:1:thread-secret"), graph_client_for=None,
+    )
+    assert "لا تملك صلاحية فتح هذه المحادثة" in client.messages[0][1]
+
+
 def test_comment_rule_access_requires_owned_selected_zernio_account(conn):
     channel = conn.execute(
         """INSERT INTO channels
