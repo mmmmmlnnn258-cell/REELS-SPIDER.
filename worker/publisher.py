@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1388,14 +1389,20 @@ def publish_one(
                 media_items=media_items,
                 content_type=content_type,
                 first_comment=None,  # Zernio comment adapter is a separate follow-up.
-                idempotency_key=f"black-spider-publication-{pub['id']}",
+                idempotency_key=str(uuid.uuid5(uuid.NAMESPACE_URL, f"black-spider-publication-{pub['id']}")),
             )
         except _NonRetryable as exc:
             log(f"Zernio validation failed: {exc}")
             return _mark_failure(conn, pub, config, now, str(exc), terminal=True)
         except Exception as exc:  # noqa: BLE001 — Zernio/network failures use normal retry policy
-            log(f"Zernio publish failed: {redact(str(exc))}")
-            return _mark_failure(conn, pub, config, now, f"Zernio publish: {redact(str(exc))}", terminal=False)
+            log(f"Zernio publish failed or could not be confirmed: {redact(str(exc))}")
+            # Zernio retains post request IDs for a short window. Never blindly
+            # retry an ambiguous write and risk creating a duplicate Instagram post.
+            return _mark_failure(
+                conn, pub, config, now,
+                f"Zernio publish requires manual outcome verification before retry: {redact(str(exc))}",
+                terminal=True,
+            )
 
         db.update_publication(
             conn, pub["id"],
