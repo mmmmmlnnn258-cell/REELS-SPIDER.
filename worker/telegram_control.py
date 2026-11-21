@@ -173,7 +173,7 @@ def _schedule_list(conn, client, token: str, chat_id: str, page: int = 0):
     lines = [f"📅 المنشورات المجدولة الحالية (صفحة {page + 1}/{page_count}):"]
     keyboard = []
     for row in rows:
-        caption = (row["caption"] or "بدون وصف").replace("\\n", " ")[:48]
+        caption = (row["caption"] or "بدون وصف").replace("\n", " ")[:48]
         local_time = _local_stamp(row["scheduled_at"], row["timezone"])
         state = "موقوف مؤقتاً" if row["is_held"] else (
             "بانتظار الموافقة" if row["status"] == "pending_approval" else "مجدول"
@@ -345,7 +345,7 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
                 rows = ZernioClient().list_inbox_conversations(
                     account_id=channel["zernio_account_id"], limit=50
                 )
-                lines.append(f"\\n{channel['account_name']}: {len(rows)} محادثة عبر Zernio")
+                lines.append(f"\n{channel['account_name']}: {len(rows)} محادثة عبر Zernio")
                 for conv in rows[:8]:
                     cid = str(conv.get("id") or "")
                     if not cid or len(cid) > 512:
@@ -371,7 +371,7 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
                 lines.append(f"تعذر قراءة {channel['account_name']}: يلزم ربط صفحة Facebook لهذه القناة.")
                 continue
             rows = graph.get_instagram_conversations(messaging_id, channel["access_token"], limit=15)
-            lines.append(f"\\n{channel['account_name']}: {len(rows)} محادثة")
+            lines.append(f"\n{channel['account_name']}: {len(rows)} محادثة")
             own_ids = {str(channel["remote_account_id"] or ""), str(channel["linked_page_id"] or "")}
             for conv in rows[:8]:
                 cid = str(conv.get("id") or "")
@@ -397,9 +397,9 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
                 if channel["zernio_account_id"] else
                 _messaging_permission_hint(channel, graph) if graph is not None else "تعذر تهيئة عميل Meta."
             )
-            lines.append(f"تعذر جلب الرسائل: {redact(str(exc))[:220]}\\n{hint}")
+            lines.append(f"تعذر جلب الرسائل: {redact(str(exc))[:220]}\n{hint}")
     keyboard.append([{"text": "↩ القائمة", "callback_data": "bs:menu"}])
-    _send(client, token, chat_id, "\\n".join(lines)[:3900], {"inline_keyboard": keyboard})
+    _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard": keyboard})
 
 
 def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, conversation_id):
@@ -436,9 +436,9 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
             lines = [f"✉️ {peer_name} · {channel['account_name']} · Zernio"]
             for msg in reversed(messages[-10:]):
                 who = "حسابك" if msg.get("direction") == "outgoing" else str(msg.get("senderName") or peer_name)
-                lines.append(f"\\n{who}: {str(msg.get('message') or '[مرفق أو رسالة بلا نص]')[:650]}")
+                lines.append(f"\n{who}: {str(msg.get('message') or '[مرفق أو رسالة بلا نص]')[:650]}")
             window_open, window_error = _zernio_dm_window(messages, datetime.now(timezone.utc))
-            lines.append("\\nنافذة الرد اليدوي: " + ("مفتوحة" if window_open else "مغلقة/غير مؤكدة"))
+            lines.append("\nنافذة الرد اليدوي: " + ("مفتوحة" if window_open else "مغلقة/غير مؤكدة"))
             with conn:
                 conn.execute("""INSERT INTO telegram_dm_reply_sessions
                     (chat_id,channel_id,conversation_id,recipient_id,created_at) VALUES(?,?,?,?,?)
@@ -446,7 +446,7 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
                     conversation_id=excluded.conversation_id,recipient_id=excluded.recipient_id,
                     created_at=excluded.created_at""",
                     (chat_id, channel_id, conversation_id, recipient, datetime.now(timezone.utc).isoformat()))
-            _send(client, token, chat_id, "\\n".join(lines)[:3900], {"inline_keyboard": [
+            _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard": [
                 [{"text": "✍️ كتابة رد يدوي", "callback_data": "bs:dm:compose"}],
                 [{"text": "↩ صندوق الرسائل", "callback_data": "bs:dms"}],
             ]})
@@ -471,7 +471,7 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
         for msg in messages[-10:]:
             sender = msg.get("from") or {}
             who = "حسابك" if str(sender.get("id") or "") in own_ids else (sender.get("username") or "العميل")
-            lines.append(f"\\n{who}: {str(msg.get('message') or '[مرفق أو رسالة بلا نص]')[:650]}")
+            lines.append(f"\n{who}: {str(msg.get('message') or '[مرفق أو رسالة بلا نص]')[:650]}")
         with conn:
             conn.execute("""INSERT INTO telegram_dm_reply_sessions
                 (chat_id,channel_id,conversation_id,recipient_id,created_at) VALUES(?,?,?,?,?)
@@ -479,7 +479,7 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
                 conversation_id=excluded.conversation_id,recipient_id=excluded.recipient_id,
                 created_at=excluded.created_at""",
                 (chat_id, channel_id, conversation_id, recipient, datetime.now(timezone.utc).isoformat()))
-        _send(client, token, chat_id, "\\n".join(lines)[:3900], {"inline_keyboard": [
+        _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard": [
             [{"text": "✍️ كتابة رد يدوي", "callback_data": "bs:dm:compose"}],
             [{"text": "↩ صندوق الرسائل", "callback_data": "bs:dms"}],
         ]})
@@ -490,7 +490,7 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
             if channel["zernio_account_id"] else
             _messaging_permission_hint(channel, graph) if graph is not None else "تعذر تهيئة عميل Meta."
         )
-        _send(client, token, chat_id, f"تعذر فتح المحادثة: {redact(str(exc))[:350]}\\n{hint}", _menu())
+        _send(client, token, chat_id, f"تعذر فتح المحادثة: {redact(str(exc))[:350]}\n{hint}", _menu())
 
 
 
@@ -758,7 +758,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             else:
                 lines = ["🗓 آخر المنشورات:"]
                 for row in rows:
-                    caption = (row["caption"] or "بدون وصف").replace("\\n", " ")[:70]
+                    caption = (row["caption"] or "بدون وصف").replace("\n", " ")[:70]
                     lines.append(f"#{row['id']} · {row['status']} · {row['scheduled_at']}\n{caption}")
                 body = "\n".join(lines)
             _send(client, token, chat_id, body, _menu())
@@ -896,9 +896,9 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             ] + [[{"text": "↩ القائمة", "callback_data": "bs:menu"}]]}
             lines = ["🚀 اختر منشوراً مجدولاً لتقديم موعده إلى الآن:"]
             for row in rows:
-                caption = (row["caption"] or "بدون وصف").replace("\\n", " ")[:60]
-                lines.append(f"#{row['id']} · {row['scheduled_at']}\\n{caption}")
-            _send(client, token, chat_id, "\\n".join(lines), keyboard)
+                caption = (row["caption"] or "بدون وصف").replace("\n", " ")[:60]
+                lines.append(f"#{row['id']} · {row['scheduled_at']}\n{caption}")
+            _send(client, token, chat_id, "\n".join(lines), keyboard)
             return True
         if data.startswith("bs:publish:"):
             raw_id = data.removeprefix("bs:publish:")
