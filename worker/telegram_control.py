@@ -260,15 +260,39 @@ def _comment_permission_hint(channel, graph) -> str:
     return "تحقق من صلاحية instagram_manage_comments."
 
 
-def _connected_ig_channels(conn):
-    return conn.execute("""SELECT id, platform, account_name, remote_account_id, linked_page_id, access_token,
+def _selected_zernio_channel_id(conn, chat_id, sender_id):
+    preference = conn.execute(
+        """SELECT selected_zernio_channel_id FROM telegram_account_preferences
+            WHERE telegram_chat_id=? AND telegram_user_id=?""",
+        (str(chat_id), str(sender_id)),
+    ).fetchone()
+    if not preference or not preference["selected_zernio_channel_id"]:
+        return None
+    channel_id = int(preference["selected_zernio_channel_id"])
+    owned = conn.execute(
+        """SELECT 1 FROM channels
+            WHERE id=? AND platform='instagram' AND is_active=1
+              AND zernio_account_id IS NOT NULL AND TRIM(zernio_account_id)<>''
+              AND zernio_telegram_chat_id=? AND zernio_telegram_user_id=?""",
+        (channel_id, str(chat_id), str(sender_id)),
+    ).fetchone()
+    return channel_id if owned else -1
+
+
+def _connected_ig_channels(conn, chat_id=None, sender_id=None):
+    rows = conn.execute("""SELECT id, platform, account_name, remote_account_id, linked_page_id, access_token,
                instagram_auth_method, zernio_account_id, zernio_profile_id
         FROM channels WHERE platform='instagram' AND is_active=1
         AND (
           (remote_account_id IS NOT NULL AND TRIM(remote_account_id)<>''
            AND access_token IS NOT NULL AND TRIM(access_token)<>'')
-          OR (zernio_account_id IS NOT NULL AND TRIM(zernio_account_id)<>'')
-        ) ORDER BY id""").fetchall()
+          OR (zernio_account_id IS NOT NULL AND TRIM(zernio_account_id)<>''
+              AND zernio_telegram_chat_id=? AND zernio_telegram_user_id=?)
+        ) ORDER BY id""", (str(chat_id or ""), str(sender_id or ""))).fetchall()
+    selected_id = _selected_zernio_channel_id(conn, chat_id, sender_id) if chat_id is not None and sender_id is not None else None
+    if selected_id is not None:
+        return [row for row in rows if not row["zernio_account_id"] or int(row["id"]) == selected_id]
+    return rows
 
 
 def _comment_rule_detail(conn, client, token, chat_id, rule_id):
@@ -357,8 +381,8 @@ def _comment_live_list(conn, client, graph_client_for, token, chat_id, rule_id):
         _send(client, token, chat_id, f"تعذر جلب التعليقات: {redact(str(exc))[:400]}\n{hint}", _menu())
 
 
-def _dm_list(conn, client, graph_client_for, token, chat_id):
-    channels = _connected_ig_channels(conn)
+def _dm_list(conn, client, graph_client_for, token, chat_id, sender_id):
+    channels = _connected_ig_channels(conn, chat_id, sender_id)
     if not channels:
         _send(client, token, chat_id, "لا توجد قناة Instagram متصلة ونشطة.", _menu())
         return
@@ -1055,7 +1079,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             _send(client, token, chat_id, "💬 إدارة التعليقات\nاختر قاعدة لعرض الردود والتحكم بها:", {"inline_keyboard": keyboard})
             return True
         if data == "bs:dms":
-            _dm_list(conn, client, graph_client_for, token, chat_id)
+            _dm_list(conn, client, graph_client_for, token, chat_id, sender_id)
             return True
         if data.startswith("bs:dm:view:"):
             parts = data.split(":")
