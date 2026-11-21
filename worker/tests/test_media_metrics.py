@@ -312,3 +312,29 @@ def test_platforms_without_post_insights_are_skipped(conn, config):
     assert run_media_metrics(conn, config, now=NOW,
                              client_for=lambda p: FakeInsightClient()) == 0
     assert _metric_rows(conn) == []
+
+
+def test_zernio_media_metrics_populate_account_wide_media_rows(conn, config, monkeypatch):
+    channel_id = conn.execute(
+        """INSERT INTO channels
+             (platform, account_name, zernio_account_id, zernio_profile_id)
+           VALUES ('instagram', 'Zernio', 'z-account', 'z-profile')"""
+    ).lastrowid
+    media_id = _media(conn, channel_id, "ig-media-1")
+    class FakeZernio:
+        last_usage_pct = None
+        retry_after_seconds = 0
+        def get_post_analytics(self, post_id, *, account_id):
+            assert post_id == "ig-media-1"
+            assert account_id == "z-account"
+            return {"reach": 987, "likes": 76, "comments": 8, "saves": 9, "shares": 3, "views": 1200}
+    monkeypatch.setattr("worker.zernio_client.ZernioClient", FakeZernio)
+    assert run_media_metrics(conn, config, client=None, now=NOW) == 1
+    row = conn.execute(
+        "SELECT * FROM media_metrics WHERE remote_media_id=?", (media_id,)
+    ).fetchone()
+    assert row["reach"] == 987
+    assert row["likes"] == 76
+    assert row["comments"] == 8
+    assert row["saves"] == 9
+    assert row["impressions"] == 1200
