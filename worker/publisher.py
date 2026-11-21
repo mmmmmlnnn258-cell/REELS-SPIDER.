@@ -1387,7 +1387,7 @@ def publish_one(
                 account_id=channel["zernio_account_id"],
                 media_items=media_items,
                 content_type=content_type,
-                first_comment=plan["first_comment"],
+                first_comment=None,  # Zernio comment adapter is a separate follow-up.
                 idempotency_key=f"black-spider-publication-{pub['id']}",
             )
         except _NonRetryable as exc:
@@ -1402,7 +1402,7 @@ def publish_one(
             status="posted", remote_post_id=result["remote_post_id"],
             published_at=_iso(now), last_error=None, next_retry_at=None,
             updated_at=_iso(now),
-            first_comment_status=("posted" if plan["first_comment"] and surface != "story" else "none"),
+            first_comment_status="none",
         )
         if post["content_kind"] == "one_time":
             _maybe_retire_one_time(conn, post["id"], now)
