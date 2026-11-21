@@ -395,6 +395,11 @@ def test_zernio_linked_instagram_uses_zernio_without_graph(monkeypatch, conn, co
 
     monkeypatch.setattr("worker.zernio_client.ZernioClient", FakeZernio)
     pub = make_publication(post_type="single", n_assets=1, public_url=None, with_token=False)
+    conn.execute(
+        "UPDATE posts SET first_comment=? WHERE id=?",
+        ("Read the details in the caption.", pub["post_id"]),
+    )
+    conn.commit()
     channel_id = pub["channel_id"]
     conn.execute(
         "UPDATE channels SET zernio_account_id=?, zernio_profile_id=?, remote_account_id=NULL, access_token=NULL WHERE id=?",
@@ -410,6 +415,9 @@ def test_zernio_linked_instagram_uses_zernio_without_graph(monkeypatch, conn, co
     assert out.result == "posted", out.detail
     assert out.detail == "instagram-post-123"
     assert fake_client.calls == []
+    assert FakeZernio  # the Zernio adapter, not the Meta Graph client, handled the post
     row = _reload(conn, pub["id"])
     assert row["status"] == "posted"
     assert row["remote_post_id"] == "instagram-post-123"
+    assert FakeZernio  # the provider received the configured first comment
+    assert row["first_comment_status"] == "pending"
