@@ -1249,8 +1249,8 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                             }
                             for item in result["logs"]:
                                 lines.append(
-                                    f"\\n{item.get('createdAt') or ''} · {labels.get(item.get('status'), item.get('status') or 'غير معروف')}"
-                                    f"\\n{item.get('commenterName') or item.get('commenterUsername') or 'مستخدم'}: "
+                                    f"\n{item.get('createdAt') or ''} · {labels.get(item.get('status'), item.get('status') or 'غير معروف')}"
+                                    f"\n{item.get('commenterName') or item.get('commenterUsername') or 'مستخدم'}: "
                                     f"{str(item.get('commentText') or '')[:140]}"
                                 )
                                 if item.get("error"):
@@ -1267,7 +1267,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                         except Exception as exc:
                             from .redact import redact
                             lines.append(f"تعذر جلب سجل Zernio: {redact(str(exc))[:250]}")
-                    _send(client, token, chat_id, "\\n".join(lines)[:3900], {"inline_keyboard":[[
+                    _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[[
                         {"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{rule_id}"}
                     ]]})
                 else:
@@ -1276,10 +1276,10 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                         (rule_id,)).fetchall()
                     lines = [f"📜 سجل آخر 10 تعليقات للقاعدة #{raw_id}:"]
                     for row in rows:
-                        lines.append(f"\\n{row['created_at']} · {row['status']} · #{row['comment_id']}\\n"
-                                     f"{(row['comment_text'] or '')[:160]}\\n"
+                        lines.append(f"\n{row['created_at']} · {row['status']} · #{row['comment_id']}\n"
+                                     f"{(row['comment_text'] or '')[:160]}\n"
                                      f"{('خطأ: '+row['last_error'][:160]) if row['last_error'] else ''}")
-                    _send(client, token, chat_id, "\\n".join(lines)[:3900], {"inline_keyboard":[[
+                    _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[[
                         {"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{raw_id}"}
                     ]]})
             return True
