@@ -91,6 +91,7 @@ def test_create_post_is_publish_now_and_idempotent():
         content="Caption",
         account_id="ig-account-1",
         media_items=[{"url": "https://media.zernio.com/file.jpg", "type": "image"}],
+        first_comment="More details below",
         idempotency_key="black-spider-publication-42",
     )
     assert result["remote_post_id"] == "ig-post-1"
@@ -98,7 +99,11 @@ def test_create_post_is_publish_now_and_idempotent():
     assert method == "POST" and url.endswith("/posts")
     assert kwargs["headers"]["Idempotency-Key"] == "black-spider-publication-42"
     assert kwargs["json"]["publishNow"] is True
-    assert kwargs["json"]["platforms"] == [{"platform": "instagram", "accountId": "ig-account-1"}]
+    assert kwargs["json"]["platforms"] == [{
+        "platform": "instagram", "accountId": "ig-account-1",
+        "platformSpecificData": {"firstComment": "More details below"},
+    }]
+    assert "firstComment" not in kwargs["json"]
 
 
 def test_upload_media_uses_presigned_put_without_api_key(tmp_path):
@@ -175,3 +180,23 @@ def test_list_comment_automations_is_profile_scoped():
     client = ZernioClient("private-key", session=session)
     assert client.list_comment_automations(profile_id="profile-1")[0]["id"] == "automation-1"
     assert session.calls[0][2]["params"] == {"profileId": "profile-1"}
+
+
+def test_story_content_type_is_nested_in_instagram_platform_data():
+    session = Session([Response(payload={
+        "post": {
+            "_id": "zernio-post-story",
+            "status": "published",
+            "platforms": [{"platform": "instagram", "status": "published", "platformPostUrl": "https://instagram.com/stories/example"}],
+        }
+    })])
+    client = ZernioClient("private-key", session=session)
+    result = client.create_post(
+        content=None, account_id="ig-account-1",
+        media_items=[{"url": "https://media.zernio.com/story.jpg", "type": "image"}],
+        content_type="story", idempotency_key="black-spider-story-7",
+    )
+    assert result["remote_post_id"] == "https://instagram.com/stories/example"
+    body = session.calls[0][2]["json"]
+    assert body["platforms"][0]["platformSpecificData"] == {"contentType": "story"}
+    assert "contentType" not in body
