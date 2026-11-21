@@ -66,16 +66,38 @@ export async function GET(req: NextRequest) {
     // account index plus an IMMEDIATE transaction prevents duplicate rows on retries.
     const finalize = db.transaction(() => {
       const existing = db.prepare(
-        "SELECT id FROM channels WHERE zernio_account_id=?",
-      ).get(accountId) as { id: number } | undefined;
+        "SELECT id, zernio_telegram_chat_id, zernio_telegram_user_id FROM channels WHERE zernio_account_id=?",
+      ).get(accountId) as {
+        id: number;
+        zernio_telegram_chat_id: string | null;
+        zernio_telegram_user_id: string | null;
+      } | undefined;
 
-      if (!existing) {
+      if (existing) {
+        const sameOwner =
+          (!existing.zernio_telegram_chat_id || existing.zernio_telegram_chat_id === ticketRow.telegram_chat_id) &&
+          (!existing.zernio_telegram_user_id || existing.zernio_telegram_user_id === ticketRow.telegram_user_id);
+        if (!sameOwner) {
+          throw new ZernioApiError("هذا الحساب مرتبط مسبقاً بمستخدم Telegram آخر.");
+        }
+        db.prepare(
+          `UPDATE channels SET account_name=?, zernio_profile_id=?, zernio_username=?,
+             zernio_telegram_chat_id=?, zernio_telegram_user_id=?, updated_at=? WHERE id=?`,
+        ).run(
+          account.username, profileId, account.username,
+          ticketRow.telegram_chat_id, ticketRow.telegram_user_id, now, existing.id,
+        );
+      } else {
         db.prepare(
           `INSERT INTO channels
             (platform, account_name, timezone, zernio_account_id, zernio_profile_id,
-             zernio_username, is_active, created_at, updated_at)
-           VALUES ('instagram', ?, 'Asia/Aden', ?, ?, ?, 1, ?, ?)`,
-        ).run(account.username, accountId, profileId, account.username, now, now);
+             zernio_username, zernio_telegram_chat_id, zernio_telegram_user_id,
+             is_active, created_at, updated_at)
+           VALUES ('instagram', ?, 'Asia/Aden', ?, ?, ?, ?, ?, 1, ?, ?)`,
+        ).run(
+          account.username, accountId, profileId, account.username,
+          ticketRow.telegram_chat_id, ticketRow.telegram_user_id, now, now,
+        );
       }
 
       db.prepare(
