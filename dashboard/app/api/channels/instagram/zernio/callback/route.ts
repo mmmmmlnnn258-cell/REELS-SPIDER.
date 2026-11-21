@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
 
     const linked = db.prepare(
       `UPDATE channels
-          SET zernio_account_id=?, zernio_profile_id=?, account_name=?, updated_at=?
+          SET zernio_account_id=?, zernio_profile_id=?, zernio_username=?, updated_at=?
         WHERE id=? AND zernio_account_id IS NULL
           AND (remote_account_id IS NULL OR TRIM(remote_account_id)='')
           AND (access_token IS NULL OR TRIM(access_token)='')`,
