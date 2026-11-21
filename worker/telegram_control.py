@@ -989,6 +989,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 _send(client, token, chat_id, "لم يتم الإلغاء: الموعد لم يعد مجدولاً أو ينتظر الموافقة.", _menu())
             return True
         if data == "bs:publish":
+            selected_zernio_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
             rows = conn.execute(
                 """SELECT pub.id, p.caption, pub.scheduled_at
                      FROM publications pub
@@ -996,9 +997,15 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                      JOIN channels c ON c.id = pub.channel_id
                     WHERE pub.status = 'scheduled' AND pub.is_held = 0
                       AND c.platform = 'instagram' AND c.is_active = 1
-                      AND c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id) <> ''
-                      AND c.access_token IS NOT NULL AND TRIM(c.access_token) <> ''
-                    ORDER BY pub.scheduled_at ASC, pub.id ASC LIMIT 8"""
+                      AND (
+                        (c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id) <> ''
+                         AND c.access_token IS NOT NULL AND TRIM(c.access_token) <> '')
+                        OR (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id) <> ''
+                            AND c.zernio_telegram_chat_id=? AND c.zernio_telegram_user_id=?
+                            AND (? IS NULL OR c.id=?))
+                      )
+                    ORDER BY pub.scheduled_at ASC, pub.id ASC LIMIT 8""",
+                (chat_id, sender_id, selected_zernio_id, selected_zernio_id),
             ).fetchall()
             if not rows:
                 _send(client, token, chat_id,
@@ -1022,6 +1029,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 return True
             publication_id = int(raw_id)
             now = datetime.now(timezone.utc).isoformat()
+            selected_zernio_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
             with conn:
                 updated = conn.execute(
                     """UPDATE publications
@@ -1031,12 +1039,15 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                               SELECT 1 FROM channels c
                                WHERE c.id = publications.channel_id
                                  AND c.platform = 'instagram' AND c.is_active = 1
-                                 AND c.remote_account_id IS NOT NULL
-                                 AND TRIM(c.remote_account_id) <> ''
-                                 AND c.access_token IS NOT NULL
-                                 AND TRIM(c.access_token) <> ''
+                                 AND (
+                                   (c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id) <> ''
+                                    AND c.access_token IS NOT NULL AND TRIM(c.access_token) <> '')
+                                   OR (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id) <> ''
+                                       AND c.zernio_telegram_chat_id=? AND c.zernio_telegram_user_id=?
+                                       AND (? IS NULL OR c.id=?))
+                                 )
                           )""",
-                    (now, now, publication_id),
+                    (now, now, publication_id, chat_id, sender_id, selected_zernio_id, selected_zernio_id),
                 )
                 if updated.rowcount == 1 and update_id is not None:
                     conn.execute(
