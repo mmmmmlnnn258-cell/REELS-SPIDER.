@@ -466,7 +466,7 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
                 recipient = str(incoming.get("senderId") or "unknown")
             peer_name = str(conversation.get("participantName") or recipient or "العميل")
             lines = [f"✉️ {peer_name} · {channel['account_name']} · Zernio"]
-            for msg in reversed(messages[-10:]):
+            for msg in reversed(messages[:10]):
                 who = "حسابك" if msg.get("direction") == "outgoing" else str(msg.get("senderName") or peer_name)
                 lines.append(f"\n{who}: {str(msg.get('message') or '[مرفق أو رسالة بلا نص]')[:650]}")
             window_open, window_error = _zernio_dm_window(messages, datetime.now(timezone.utc))
