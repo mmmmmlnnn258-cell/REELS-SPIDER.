@@ -900,7 +900,7 @@ def test_zernio_dm_legacy_numeric_callback_cannot_open_another_users_account(con
     client = FakeTelegram()
     assert process_control_update(
         conn, cfg(config), client,
-        callback(data=f"bs:dm:view:{channel_id}:thread-secret"), graph_client_for=None,
+        callback(data=f"bs:dm:view:{channel_id}:123456789"), graph_client_for=None,
     )
     assert "لا تملك صلاحية فتح هذه المحادثة" in client.messages[0][1]
 
