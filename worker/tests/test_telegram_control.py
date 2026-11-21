@@ -818,4 +818,5 @@ def test_zernio_account_can_be_selected_and_is_scoped_to_telegram_owner(conn, co
         conn, cfg(config), other,
         callback(update_id=902, data=f"bs:account:select:z:{channel}", sender_id=999),
     )
-    assert "غير موجود أو غير متصل لهذا المستخدم" in other.messages[0][1]
+    assert other.messages == []
+    assert other.answered == [("cb-902", "غير مصرح")]
