@@ -147,13 +147,13 @@ def test_list_inbox_messages_quotes_opaque_conversation_id():
 
 
 def test_send_inbox_message_requires_idempotency_and_uses_bearer():
-    session = Session([Response(payload={"success": True, "message": {"id": "sent-1"}})])
+    session = Session([Response(payload={"success": True, "data": {"messageId": "sent-1"}})])
     client = ZernioClient("private-key", session=session)
     result = client.send_inbox_message(
         "thread-1", account_id="ig-account", message="Hello",
         idempotency_key="black-spider-human-reply-17",
     )
-    assert result["message"]["id"] == "sent-1"
+    assert result["data"]["messageId"] == "sent-1"
     method, url, kwargs = session.calls[0]
     assert method == "POST" and url.endswith("/thread-1/messages")
     assert kwargs["headers"]["Authorization"] == "Bearer private-key"
