@@ -2,7 +2,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from worker.telegram_control import process_control_update, _zernio_dm_window
+from worker.telegram_control import (process_control_update, _zernio_dm_window,\n                                      _connected_ig_channels, _telegram_can_access_comment_rule)
 
 
 class FakeTelegram:
@@ -820,3 +820,89 @@ def test_zernio_account_can_be_selected_and_is_scoped_to_telegram_owner(conn, co
     )
     assert other.messages == []
     assert other.answered == [("cb-902", "غير مصرح")]
+
+
+def test_selected_zernio_account_scopes_telegram_inbox_channels(conn):
+    first = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'first', 'z-1', 'p-1', '7441755677', '7441755677', 1)"""
+    ).lastrowid
+    conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'second', 'z-2', 'p-1', '7441755677', '7441755677', 1)"""
+    )
+    conn.execute(
+        """INSERT INTO telegram_account_preferences
+           (telegram_chat_id, telegram_user_id, selected_zernio_channel_id, updated_at)
+           VALUES ('7441755677', '7441755677', ?, '2026-11-21T00:00:00Z')""",
+        (first,),
+    )
+    conn.commit()
+    channels = _connected_ig_channels(conn, "7441755677", "7441755677")
+    assert [int(row["id"]) for row in channels] == [first]
+
+
+def test_comment_rule_access_requires_owned_selected_zernio_account(conn):
+    channel = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'owned', 'z-owned', 'p-1',
+                   '7441755677', '7441755677', 1)"""
+    ).lastrowid
+    rule = conn.execute(
+        """INSERT INTO instagram_comment_rules(channel_id, media_id, keywords_json, enabled)
+           VALUES (?, 'media-owned', '[]', 1)""",
+        (channel,),
+    ).lastrowid
+    conn.commit()
+    assert _telegram_can_access_comment_rule(conn, rule, "7441755677", "7441755677")
+    assert not _telegram_can_access_comment_rule(conn, rule, "7441755677", "999")
+    conn.execute(
+        """INSERT INTO telegram_account_preferences
+           (telegram_chat_id, telegram_user_id, selected_zernio_channel_id, updated_at)
+           VALUES ('7441755677', '7441755677', 999999, '2026-11-21T00:00:00Z')"""
+    )
+    conn.commit()
+    assert not _telegram_can_access_comment_rule(conn, rule, "7441755677", "7441755677")
+
+
+def test_publish_now_lists_and_advances_owned_zernio_publication(conn, config):
+    channel = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'z_publish', 'z-publish-1', 'p-1',
+                   '7441755677', '7441755677', 1)"""
+    ).lastrowid
+    post = conn.execute(
+        "INSERT INTO posts(caption, post_type, status) VALUES ('Zernio caption', 'reel', 'scheduled')"
+    ).lastrowid
+    publication = conn.execute(
+        """INSERT INTO publications(post_id, channel_id, scheduled_at, status)
+           VALUES (?, ?, '2099-01-01T12:00:00Z', 'scheduled')""",
+        (post, channel),
+    ).lastrowid
+    conn.execute(
+        """INSERT INTO telegram_account_preferences
+           (telegram_chat_id, telegram_user_id, selected_zernio_channel_id, updated_at)
+           VALUES ('7441755677', '7441755677', ?, '2026-11-21T00:00:00Z')""",
+        (channel,),
+    )
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(conn, cfg(config), client, callback(data="bs:publish"))
+    assert "Zernio caption" in client.messages[0][1]
+    assert process_control_update(
+        conn, cfg(config), client,
+        callback(update_id=903, data=f"bs:publish:{publication}"),
+    )
+    row = conn.execute(
+        "SELECT status, scheduled_at FROM publications WHERE id=?", (publication,)
+    ).fetchone()
+    assert row["status"] == "scheduled"
+    assert row["scheduled_at"] < "2099-01-01T12:00:00Z"
