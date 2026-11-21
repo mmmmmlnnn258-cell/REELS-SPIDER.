@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { publicAppOrigin } from "@/lib/public-app-url";
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { createInstagramConnectUrl, ensureZernioProfile, ZernioApiError } from "@/lib/zernio";
@@ -47,7 +48,7 @@ export async function GET(req: NextRequest) {
        ON CONFLICT(id) DO UPDATE SET profile_id=excluded.profile_id, updated_at=excluded.updated_at`,
     ).run(profileId, now, now);
 
-    const callback = new URL("/api/channels/instagram/zernio/callback", req.nextUrl.origin);
+    const callback = new URL("/api/channels/instagram/zernio/callback", publicAppOrigin());
     callback.searchParams.set("ticket", ticket);
     const authUrl = await createInstagramConnectUrl(profileId, callback.toString());
     const response = NextResponse.redirect(authUrl);
