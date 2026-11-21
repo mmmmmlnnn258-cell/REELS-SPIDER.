@@ -1381,7 +1381,7 @@ def publish_one(
                     asset_path,
                     media_type=plan["media_kind"] or "image",
                 ))
-            content_type = "reel" if surface == "reel" else "story" if surface == "story" else None
+            content_type = "story" if surface == "story" else None  # A single video defaults to a Reel in Zernio.
             result = zernio.create_post(
                 content=plan["caption"],
                 account_id=channel["zernio_account_id"],
