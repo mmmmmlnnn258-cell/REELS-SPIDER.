@@ -210,3 +210,17 @@ def test_list_post_comments_is_scoped_to_zernio_instagram_account():
     assert session.calls[0][1].endswith("/inbox/comments/media-1")
     assert session.calls[0][2]["params"]["accountId"] == "ig-account-1"
     assert session.calls[0][2]["params"]["platform"] == "instagram"
+
+
+def test_list_comment_automation_logs_returns_delivery_and_keyword_miss_data():
+    session = Session([Response(payload={
+        "logs": [{"id": "log-1", "status": "sent", "commenterName": "Customer"}],
+        "misses": {"total": 3, "retentionDays": 7, "samples": []},
+        "pagination": {"total": 1, "hasMore": False},
+    })])
+    client = ZernioClient("private-key", session=session)
+    result = client.list_comment_automation_logs("automation-1", limit=10, skip=0)
+    assert result["logs"][0]["status"] == "sent"
+    assert result["misses"]["total"] == 3
+    assert session.calls[0][1].endswith("/comment-automations/automation-1/logs")
+    assert session.calls[0][2]["params"] == {"limit": 10, "skip": 0}
