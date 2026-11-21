@@ -403,14 +403,57 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
 
 
 def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, conversation_id):
-    channel = conn.execute("""SELECT id,platform,account_name,remote_account_id,linked_page_id,access_token,instagram_auth_method FROM channels
-        WHERE id=? AND platform='instagram' AND is_active=1 AND remote_account_id IS NOT NULL
-        AND access_token IS NOT NULL""", (channel_id,)).fetchone()
-    if channel is None or graph_client_for is None:
-        _send(client, token, chat_id, "القناة غير متصلة أو صلاحية Meta غير متاحة.", _menu())
+    channel = conn.execute("""SELECT id,platform,account_name,remote_account_id,linked_page_id,
+        access_token,instagram_auth_method,zernio_account_id,zernio_profile_id FROM channels
+        WHERE id=? AND platform='instagram' AND is_active=1
+          AND (
+            (zernio_account_id IS NOT NULL AND TRIM(zernio_account_id)<>'')
+            OR (remote_account_id IS NOT NULL AND access_token IS NOT NULL)
+          )""", (channel_id,)).fetchone()
+    if channel is None:
+        _send(client, token, chat_id, "القناة غير متصلة.", _menu())
         return
     graph = None
     try:
+        if channel["zernio_account_id"]:
+            from .zernio_client import ZernioClient
+            zernio = ZernioClient()
+            conversations = zernio.list_inbox_conversations(
+                account_id=channel["zernio_account_id"], limit=100
+            )
+            conversation = next(
+                (item for item in conversations if str(item.get("id") or "") == str(conversation_id)),
+                {},
+            )
+            messages = zernio.list_inbox_messages(
+                conversation_id, account_id=channel["zernio_account_id"], limit=50, sort_order="desc"
+            )
+            recipient = str(conversation.get("participantId") or "")
+            if not recipient:
+                incoming = next((m for m in messages if m.get("direction") == "incoming"), {})
+                recipient = str(incoming.get("senderId") or "unknown")
+            peer_name = str(conversation.get("participantName") or recipient or "العميل")
+            lines = [f"✉️ {peer_name} · {channel['account_name']} · Zernio"]
+            for msg in reversed(messages[-10:]):
+                who = "حسابك" if msg.get("direction") == "outgoing" else str(msg.get("senderName") or peer_name)
+                lines.append(f"\\n{who}: {str(msg.get('message') or '[مرفق أو رسالة بلا نص]')[:650]}")
+            window_open, window_error = _zernio_dm_window(messages, datetime.now(timezone.utc))
+            lines.append("\\nنافذة الرد اليدوي: " + ("مفتوحة" if window_open else "مغلقة/غير مؤكدة"))
+            with conn:
+                conn.execute("""INSERT INTO telegram_dm_reply_sessions
+                    (chat_id,channel_id,conversation_id,recipient_id,created_at) VALUES(?,?,?,?,?)
+                    ON CONFLICT(chat_id) DO UPDATE SET channel_id=excluded.channel_id,
+                    conversation_id=excluded.conversation_id,recipient_id=excluded.recipient_id,
+                    created_at=excluded.created_at""",
+                    (chat_id, channel_id, conversation_id, recipient, datetime.now(timezone.utc).isoformat()))
+            _send(client, token, chat_id, "\\n".join(lines)[:3900], {"inline_keyboard": [
+                [{"text": "✍️ كتابة رد يدوي", "callback_data": "bs:dm:compose"}],
+                [{"text": "↩ صندوق الرسائل", "callback_data": "bs:dms"}],
+            ]})
+            return
+
+        if graph_client_for is None:
+            raise RuntimeError("Meta client is not configured for this legacy channel.")
         graph = graph_client_for(channel)
         messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(channel, graph) else str(channel["linked_page_id"] or "")
         if not messaging_id:
@@ -428,7 +471,7 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
         for msg in messages[-10:]:
             sender = msg.get("from") or {}
             who = "حسابك" if str(sender.get("id") or "") in own_ids else (sender.get("username") or "العميل")
-            lines.append(f"\n{who}: {str(msg.get('message') or '[مرفق أو رسالة بلا نص]')[:650]}")
+            lines.append(f"\\n{who}: {str(msg.get('message') or '[مرفق أو رسالة بلا نص]')[:650]}")
         with conn:
             conn.execute("""INSERT INTO telegram_dm_reply_sessions
                 (chat_id,channel_id,conversation_id,recipient_id,created_at) VALUES(?,?,?,?,?)
@@ -436,14 +479,19 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
                 conversation_id=excluded.conversation_id,recipient_id=excluded.recipient_id,
                 created_at=excluded.created_at""",
                 (chat_id, channel_id, conversation_id, recipient, datetime.now(timezone.utc).isoformat()))
-        _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard": [
+        _send(client, token, chat_id, "\\n".join(lines)[:3900], {"inline_keyboard": [
             [{"text": "✍️ كتابة رد يدوي", "callback_data": "bs:dm:compose"}],
             [{"text": "↩ صندوق الرسائل", "callback_data": "bs:dms"}],
         ]})
     except Exception as exc:
         from .redact import redact
-        hint = _messaging_permission_hint(channel, graph) if graph is not None else "تعذر تهيئة عميل Meta."
-        _send(client, token, chat_id, f"تعذر فتح المحادثة: {redact(str(exc))[:350]}\n{hint} قد تحتاج أيضاً مراجعة التطبيق لدى Meta.", _menu())
+        hint = (
+            "تعذر الاتصال بخدمة Zernio؛ تحقق من مفتاح ZERNIO_API_KEY وصلاحية الرسائل."
+            if channel["zernio_account_id"] else
+            _messaging_permission_hint(channel, graph) if graph is not None else "تعذر تهيئة عميل Meta."
+        )
+        _send(client, token, chat_id, f"تعذر فتح المحادثة: {redact(str(exc))[:350]}\\n{hint}", _menu())
+
 
 
 def process_control_update(conn, config, client, update: dict, graph_client_for=None) -> bool:
