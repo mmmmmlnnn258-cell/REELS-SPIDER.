@@ -190,6 +190,24 @@ class ZernioClient:
             raise ZernioError("Zernio confirmed publication without returning a platform post ID or URL.")
         return {"remote_post_id": remote_id, "zernio_post_id": str(post.get("_id") or ""), "status": status}
 
+    def list_post_comments(self, post_id: str, *, account_id: str,
+                           limit: int = 25) -> list[dict]:
+        """Read a post's Instagram comment thread from the Zernio inbox API."""
+        from urllib.parse import quote
+
+        if not post_id or not account_id:
+            raise ZernioError("A post ID and Zernio account ID are required.")
+        path = f"/inbox/comments/{quote(post_id, safe='')}"
+        payload = self._request("GET", path, params={
+            "accountId": account_id,
+            "platform": "instagram",
+            "limit": min(max(int(limit), 1), 100),
+        })
+        rows = payload.get("comments", [])
+        if not isinstance(rows, list):
+            raise ZernioError("Zernio returned an invalid comments list.")
+        return [row for row in rows if isinstance(row, dict)]
+
     def list_inbox_conversations(self, *, account_id: str, limit: int = 50,
                                  updated_since: str | None = None) -> list[dict]:
         """List Instagram conversations stored by Zernio for one connected account."""
