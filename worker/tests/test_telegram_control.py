@@ -874,10 +874,18 @@ def test_comment_rule_access_requires_owned_selected_zernio_account(conn):
     conn.commit()
     assert _telegram_can_access_comment_rule(conn, rule, "7441755677", "7441755677")
     assert not _telegram_can_access_comment_rule(conn, rule, "7441755677", "999")
+    other_channel = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'other-owner', 'z-other', 'p-1',
+                   '999', '999', 1)"""
+    ).lastrowid
     conn.execute(
         """INSERT INTO telegram_account_preferences
            (telegram_chat_id, telegram_user_id, selected_zernio_channel_id, updated_at)
-           VALUES ('7441755677', '7441755677', 999999, '2026-11-21T00:00:00Z')"""
+           VALUES ('7441755677', '7441755677', ?, '2026-11-21T00:00:00Z')""",
+        (other_channel,),
     )
     conn.commit()
     assert not _telegram_can_access_comment_rule(conn, rule, "7441755677", "7441755677")
