@@ -1225,14 +1225,63 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             if not raw_id.isdigit():
                 _send(client, token, chat_id, "رقم القاعدة غير صالح.", _menu())
             else:
-                rows = conn.execute("""SELECT comment_id,comment_text,status,last_error,created_at
-                    FROM instagram_comment_events WHERE rule_id=? ORDER BY created_at DESC LIMIT 10""",
-                    (int(raw_id),)).fetchall()
-                lines = [f"📜 سجل آخر 10 تعليقات للقاعدة #{raw_id}:"]
-                for row in rows:
-                    lines.append(f"\n{row['created_at']} · {row['status']} · #{row['comment_id']}\n{(row['comment_text'] or '')[:160]}\n{('خطأ: '+row['last_error'][:160]) if row['last_error'] else ''}")
-                _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[
-                    [{"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{raw_id}"}]]})
+                rule_id = int(raw_id)
+                rule = conn.execute("""SELECT r.zernio_automation_id,c.zernio_account_id
+                    FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id
+                    WHERE r.id=? AND c.platform='instagram' AND c.is_active=1""",
+                    (rule_id,)).fetchone()
+                if rule and rule["zernio_account_id"]:
+                    lines = [f"📜 سجل أتمتة Zernio للقاعدة #{rule_id}:"]
+                    if not rule["zernio_automation_id"]:
+                        lines.append("لم تتم مزامنة القاعدة مع Zernio بعد. المزامنة تعمل عندما يُسمح للعامل بتنفيذ الأتمتة.")
+                    else:
+                        try:
+                            from .zernio_client import ZernioClient
+                            result = ZernioClient().list_comment_automation_logs(
+                                rule["zernio_automation_id"], limit=8, skip=0
+                            )
+                            labels = {
+                                "sent": "أُرسل الرد الخاص",
+                                "failed": "فشل الرد الخاص",
+                                "skipped": "تم تخطي الرد",
+                                "pending": "بانتظار الإرسال",
+                                "gated": "بانتظار تأكيد المتابع",
+                            }
+                            for item in result["logs"]:
+                                lines.append(
+                                    f"\\n{item.get('createdAt') or ''} · {labels.get(item.get('status'), item.get('status') or 'غير معروف')}"
+                                    f"\\n{item.get('commenterName') or item.get('commenterUsername') or 'مستخدم'}: "
+                                    f"{str(item.get('commentText') or '')[:140]}"
+                                )
+                                if item.get("error"):
+                                    lines.append(f"السبب: {str(item['error'])[:180]}")
+                                if item.get("commentReplyStatus") in ("failed", "sent"):
+                                    lines.append(f"الرد العام: {item['commentReplyStatus']}")
+                            misses = result.get("misses") or {}
+                            if misses.get("total"):
+                                lines.append(
+                                    f"تعليقات لم تطابق الكلمات: {misses['total']} خلال آخر {misses.get('retentionDays') or '?'} أيام"
+                                )
+                            if not result["logs"]:
+                                lines.append("لا توجد نتائج ردود مسجلة حتى الآن.")
+                        except Exception as exc:
+                            from .redact import redact
+                            lines.append(f"تعذر جلب سجل Zernio: {redact(str(exc))[:250]}")
+                    _send(client, token, chat_id, "\\n".join(lines)[:3900], {"inline_keyboard":[[
+                        {"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{rule_id}"}
+                    ]]})
+                else:
+                    rows = conn.execute("""SELECT comment_id,comment_text,status,last_error,created_at
+                        FROM instagram_comment_events WHERE rule_id=? ORDER BY created_at DESC LIMIT 10""",
+                        (rule_id,)).fetchall()
+                    lines = [f"📜 سجل آخر 10 تعليقات للقاعدة #{raw_id}:"]
+                    for row in rows:
+                        lines.append(f"\\n{row['created_at']} · {row['status']} · #{row['comment_id']}\\n"
+                                     f"{(row['comment_text'] or '')[:160]}\\n"
+                                     f"{('خطأ: '+row['last_error'][:160]) if row['last_error'] else ''}")
+                    _send(client, token, chat_id, "\\n".join(lines)[:3900], {"inline_keyboard":[[
+                        {"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{raw_id}"}
+                    ]]})
             return True
         if data.startswith("bs:comment:"):
             raw_id = data.removeprefix("bs:comment:")
