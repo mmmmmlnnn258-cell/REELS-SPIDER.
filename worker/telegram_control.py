@@ -290,6 +290,25 @@ def _selected_zernio_channel_id(conn, chat_id, sender_id):
     return channel_id if owned else -1
 
 
+def _telegram_can_access_publication(conn, publication_id, chat_id, sender_id):
+    row = conn.execute(
+        """SELECT c.id, c.zernio_account_id, c.zernio_telegram_chat_id,
+                  c.zernio_telegram_user_id
+             FROM publications p JOIN channels c ON c.id=p.channel_id
+            WHERE p.id=?""",
+        (int(publication_id),),
+    ).fetchone()
+    if row is None:
+        return False
+    if not row["zernio_account_id"]:
+        return True
+    if (str(row["zernio_telegram_chat_id"] or "") != str(chat_id)
+            or str(row["zernio_telegram_user_id"] or "") != str(sender_id)):
+        return False
+    selected_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
+    return selected_id is None or selected_id == int(row["id"])
+
+
 def _telegram_can_access_comment_rule(conn, rule_id, chat_id, sender_id):
     row = conn.execute(
         """SELECT c.id, c.zernio_account_id, c.zernio_telegram_chat_id,
@@ -609,6 +628,15 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             return True
         if query_id:
             client.answer_callback_query(token, query_id)
+        if data.startswith("bs:schedule:"):
+            schedule_parts = data.split(":")
+            if (len(schedule_parts) == 4 and schedule_parts[2] in {"reschedule", "cancel"}
+                    and schedule_parts[3].isdigit()
+                    and not _telegram_can_access_publication(
+                        conn, int(schedule_parts[3]), chat_id, sender_id
+                    )):
+                _send(client, token, chat_id, "لا تملك صلاحية إدارة هذا المنشور أو أن الحساب المختار مختلف.", _menu())
+                return True
         if data.startswith("bs:comment:"):
             parts = data.split(":")
             rule_part = parts[3] if len(parts) >= 4 and parts[2] in {"edit", "fetch", "detail", "logs"} else (parts[2] if len(parts) >= 3 else "")
