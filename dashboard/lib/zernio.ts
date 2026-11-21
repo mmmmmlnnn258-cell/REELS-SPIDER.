@@ -15,17 +15,21 @@ function apiKey(): string {
   return value;
 }
 
-async function request(path: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
+async function request(
+  path: string,
+  init: { method?: string; body?: string; headers?: Record<string, string> } = {},
+): Promise<Record<string, unknown>> {
   let response: Response;
   try {
     response = await fetch(API_BASE + path, {
-      ...init,
+      method: init.method || "GET",
+      body: init.body,
       cache: "no-store",
       headers: {
         Authorization: `Bearer ${apiKey()}`,
         Accept: "application/json",
         ...(init.body ? { "Content-Type": "application/json" } : {}),
-        ...init.headers,
+        ...(init.headers || {}),
       },
       signal: AbortSignal.timeout(20_000),
     });
@@ -65,6 +69,7 @@ export async function ensureZernioProfile(): Promise<string> {
     const created = await request("/profiles", {
       method: "POST",
       body: JSON.stringify({ name, description: "BLACK SPIDER SocialScheduler" }),
+      headers: { "Idempotency-Key": "black-spider-profile-v1" },
     });
     const profile = (created.profile || {}) as Record<string, unknown>;
     const id = profile._id || profile.id;
@@ -110,9 +115,11 @@ export async function getInstagramAccount(profileId: string, accountId: string) 
       row.platform === "instagram" && rowProfileId === profileId && row.isActive !== false;
   }) as Record<string, unknown> | undefined;
   if (!account) throw new ZernioApiError("The Instagram account was not found in the expected Zernio profile.");
+  const username = String(account.username || account.displayName || "").trim();
+  if (!username) throw new ZernioApiError("Zernio did not return an Instagram username.");
   return {
     accountId,
-    username: String(account.username || account.displayName || ""),
+    username,
     platform: "instagram" as const,
   };
 }
