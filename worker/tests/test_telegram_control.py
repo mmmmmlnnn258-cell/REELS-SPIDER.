@@ -768,3 +768,54 @@ def test_zernio_comment_rule_can_be_toggled_from_telegram(conn, config):
         "SELECT enabled FROM instagram_comment_rules WHERE id=?", (rule_id,)
     ).fetchone()[0] == 1
     assert "تم حفظ حالة القاعدة محلياً" in client.messages[0][1]
+
+
+def test_zernio_account_appears_in_telegram_account_hub(conn, config):
+    channel = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_username, zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'spider_test', 'zernio-ig-1', 'profile-1',
+                   'spider_test', '7441755677', '7441755677', 1)"""
+    ).lastrowid
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(conn, cfg(config), client, callback(data="bs:accounts"))
+    assert "@spider_test" in client.messages[0][1]
+    assert "zernio-ig-1" in client.messages[0][1]
+    buttons = client.messages[0][2]["inline_keyboard"]
+    assert any(
+        button["callback_data"] == f"bs:account:select:z:{channel}"
+        for row in buttons for button in row
+    )
+
+
+def test_zernio_account_can_be_selected_and_is_scoped_to_telegram_owner(conn, config):
+    channel = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_username, zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'spider_test', 'zernio-ig-2', 'profile-1',
+                   'spider_test', '7441755677', '7441755677', 1)"""
+    ).lastrowid
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), client, callback(data=f"bs:account:select:z:{channel}")
+    )
+    selected = conn.execute(
+        """SELECT selected_instagram_account_id, selected_zernio_channel_id
+             FROM telegram_account_preferences
+            WHERE telegram_chat_id='7441755677' AND telegram_user_id='7441755677'"""
+    ).fetchone()
+    assert selected["selected_instagram_account_id"] is None
+    assert selected["selected_zernio_channel_id"] == channel
+    assert "تم اختيار حساب Instagram @spider_test" in client.messages[0][1]
+
+    # A different Telegram identity cannot select another user's Zernio account.
+    other = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), other,
+        callback(update_id=902, data=f"bs:account:select:z:{channel}", sender_id=999),
+    )
+    assert "غير موجود أو غير متصل لهذا المستخدم" in other.messages[0][1]
