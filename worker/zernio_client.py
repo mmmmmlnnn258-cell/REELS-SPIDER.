@@ -171,7 +171,7 @@ class ZernioClient:
             "platforms": [platform],
             "publishNow": True,
         }
-        payload = self._request("POST", "/posts", json=body, headers={"Idempotency-Key": idempotency_key})
+        payload = self._request("POST", "/posts", json=body, headers={"x-request-id": idempotency_key})
         post = payload.get("post")
         if not isinstance(post, dict):
             raise ZernioError("Zernio did not return a post record.")
@@ -268,15 +268,12 @@ class ZernioClient:
             raise ZernioError("Zernio returned an invalid comment automations list.")
         return [row for row in rows if isinstance(row, dict)]
 
-    def create_comment_automation(self, body: dict, *, idempotency_key: str) -> dict:
+    def create_comment_automation(self, body: dict) -> dict:
         if not isinstance(body, dict) or not body.get("accountId") or not body.get("profileId"):
             raise ZernioError("A profile ID and account ID are required for comment automation.")
         if not body.get("name") or "dmMessage" not in body:
             raise ZernioError("A name and DM reply are required for Instagram comment automation.")
-        if not idempotency_key:
-            raise ZernioError("An idempotency key is required for comment automation creation.")
-        payload = self._request("POST", "/comment-automations", json=body,
-                                headers={"Idempotency-Key": idempotency_key})
+        payload = self._request("POST", "/comment-automations", json=body)
         automation = payload.get("automation")
         if not isinstance(automation, dict) or not automation.get("id"):
             raise ZernioError("Zernio did not return a comment automation ID.")
