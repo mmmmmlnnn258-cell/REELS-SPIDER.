@@ -1291,7 +1291,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 return True
             rule_id = int(raw_id)
             row = conn.execute(
-                """SELECT r.enabled FROM instagram_comment_rules r
+                """SELECT r.enabled,c.zernio_account_id FROM instagram_comment_rules r
                      JOIN channels c ON c.id=r.channel_id
                     WHERE r.id=? AND c.platform='instagram' AND c.is_active=1
                       AND (
@@ -1315,14 +1315,18 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                         (int(update_id), chat_id),
                     )
             from .operation_log import record_control_operation
+            if row["zernio_account_id"]:
+                status_message = (
+                    f"تم حفظ حالة القاعدة محلياً ({'تشغيل' if new_value else 'إيقاف'}). "
+                    "لم يتم تأكيد مزامنتها على Zernio بعد؛ سيحاول العامل مزامنتها عندما يعمل مسار الأتمتة."
+                )
+            else:
+                status_message = f"{'تم تشغيل' if new_value else 'تم إيقاف'} أتمتة التعليقات للقاعدة #{rule_id}."
             record_control_operation(
                 conn, int(update_id), "تغيير أتمتة التعليقات",
-                f"{'تم تشغيل' if new_value else 'تم إيقاف'} أتمتة التعليقات للقاعدة #{rule_id}.",
-                rule_id=rule_id, now=datetime.now(timezone.utc),
+                status_message, rule_id=rule_id, now=datetime.now(timezone.utc),
             )
-            _send(client, token, chat_id,
-                  f"{'تم تشغيل' if new_value else 'تم إيقاف'} أتمتة التعليقات للقاعدة #{rule_id}.",
-                  _menu())
+            _send(client, token, chat_id, status_message, _menu())
             return True
         _send(client, token, chat_id, "زر غير معروف. افتح القائمة من جديد.", _menu())
         return True
