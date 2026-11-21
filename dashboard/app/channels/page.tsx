@@ -141,6 +141,17 @@ export default async function ChannelsPage({
             {params.instagram_error}
           </div>
         ) : null}
+        {params.zernio_connected === "1" ? (
+          <div className="rounded-card border border-status-posted bg-surface-muted p-4 text-sm text-ink-soft">
+            <span className="font-medium text-ink">Instagram authorized through Zernio.</span>{" "}
+            @{params.zernio_account || "account"} was linked to the existing channel. Publishing and inbox actions remain disabled until the Zernio worker adapter is completed.
+          </div>
+        ) : null}
+        {params.zernio_error ? (
+          <div className="rounded-card border border-status-failed bg-surface-muted p-4 text-sm text-status-failed">
+            {params.zernio_error}
+          </div>
+        ) : null}
         <ChannelForm
           defaultTimezone={config.defaultTimezone}
           nextChannelId={channels.reduce((max, c) => Math.max(max, c.id), 0) + 1}
