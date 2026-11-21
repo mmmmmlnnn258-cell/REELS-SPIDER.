@@ -1388,7 +1388,11 @@ def publish_one(
                 account_id=channel["zernio_account_id"],
                 media_items=media_items,
                 content_type=content_type,
-                first_comment=None,  # Zernio comment adapter is a separate follow-up.
+                # Zernio accepts the first comment as part of the publishing request.
+                # Its response confirms the post, but does not expose a separate comment
+                # ID/status, so keep the comment visibly pending rather than claiming it
+                # was independently confirmed.
+                first_comment=plan["first_comment"],
                 idempotency_key=str(uuid.uuid5(uuid.NAMESPACE_URL, f"black-spider-publication-{pub['id']}")),
             )
         except _NonRetryable as exc:
