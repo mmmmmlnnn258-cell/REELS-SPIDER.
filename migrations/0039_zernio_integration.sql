@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS zernio_settings (
 
 ALTER TABLE channels ADD COLUMN zernio_account_id TEXT;
 ALTER TABLE channels ADD COLUMN zernio_profile_id TEXT;
+ALTER TABLE channels ADD COLUMN zernio_username TEXT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_zernio_account_id
     ON channels(zernio_account_id)
