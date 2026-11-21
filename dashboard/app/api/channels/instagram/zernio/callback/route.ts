@@ -60,50 +60,35 @@ export async function GET(req: NextRequest) {
       throw new ZernioApiError("ملف Zernio لا يطابق جلسة الربط الحالية.");
     }
     const account = await getInstagramAccount(profileId, accountId);
-    const candidates = db.prepare(
-      `SELECT id FROM channels
-        WHERE platform='instagram' AND is_active=1
-          AND (zernio_account_id IS NULL OR TRIM(zernio_account_id)='')
-          AND (remote_account_id IS NULL OR TRIM(remote_account_id)='')
-          AND (access_token IS NULL OR TRIM(access_token)='')
-        ORDER BY id`,
-    ).all() as Array<{ id: number }>;
 
-    const existing = db.prepare(
-      "SELECT id FROM channels WHERE zernio_account_id=?",
-    ).get(accountId) as { id: number } | undefined;
-    if (existing) {
+    // A successful OAuth callback always creates an independently manageable account
+    // entry. It never depends on a pre-created placeholder, and the unique provider
+    // account index plus an IMMEDIATE transaction prevents duplicate rows on retries.
+    const finalize = db.transaction(() => {
+      const existing = db.prepare(
+        "SELECT id FROM channels WHERE zernio_account_id=?",
+      ).get(accountId) as { id: number } | undefined;
+
+      if (!existing) {
+        db.prepare(
+          `INSERT INTO channels
+            (platform, account_name, timezone, zernio_account_id, zernio_profile_id,
+             zernio_username, is_active, created_at, updated_at)
+           VALUES ('instagram', ?, 'UTC', ?, ?, ?, 1, ?, ?)`,
+        ).run(account.username, accountId, profileId, account.username, now, now);
+      }
+
       db.prepare(
-        "UPDATE telegram_account_link_tickets SET status='connected', result_account_name=?, result_account_id=?, failure_reason=NULL WHERE ticket_hash=?",
+        "UPDATE telegram_account_link_tickets SET status='connected', result_account_name=?, result_account_id=?, failure_reason=NULL WHERE ticket_hash=? AND status='pending'",
       ).run(account.username, accountId, ticketHash);
-      return returnToChannels(req, { zernio_connected: "1", zernio_account: account.username });
-    }
-    if (candidates.length !== 1) {
-      const reason = candidates.length === 0
-        ? "تم تفويض الحساب في Zernio، لكن لم نجد قناة Instagram واحدة غير مرتبطة لربطه بها."
-        : "تم تفويض الحساب في Zernio، لكن توجد عدة قنوات Instagram غير مرتبطة. يلزم تحديد القناة قبل إكمال الربط.";
-      fail(ticketHash, reason);
-      return returnToChannels(req, { zernio_error: reason });
-    }
+    });
+    finalize.immediate();
 
-    const linked = db.prepare(
-      `UPDATE channels
-          SET zernio_account_id=?, zernio_profile_id=?, zernio_username=?, updated_at=?
-        WHERE id=? AND zernio_account_id IS NULL
-          AND (remote_account_id IS NULL OR TRIM(remote_account_id)='')
-          AND (access_token IS NULL OR TRIM(access_token)='')`,
-    ).run(accountId, profileId, account.username, now, candidates[0].id).changes;
-    if (linked !== 1) {
-      throw new ZernioApiError("تغيرت القناة أثناء الربط؛ لم يتم تعديل أي قناة.");
-    }
-    db.prepare(
-      "UPDATE telegram_account_link_tickets SET status='connected', result_account_name=?, result_account_id=?, failure_reason=NULL WHERE ticket_hash=?",
-    ).run(account.username, accountId, ticketHash);
     return returnToChannels(req, { zernio_connected: "1", zernio_account: account.username });
   } catch (error) {
     const reason = error instanceof ZernioApiError
       ? error.message
-      : "تعذر التحقق من حساب Instagram أو ربطه بالقناة.";
+      : "تعذر التحقق من حساب Instagram أو إكمال ربطه.";
     fail(ticketHash, reason);
     return returnToChannels(req, { zernio_error: reason });
   }
