@@ -381,9 +381,12 @@ def test_zernio_linked_instagram_uses_zernio_without_graph(monkeypatch, conn, co
     from pathlib import Path
 
     class FakeZernio:
+        instances = []
+
         def __init__(self):
             self.uploaded = []
             self.posts = []
+            self.instances.append(self)
 
         def upload_media(self, path, *, media_type=None):
             self.uploaded.append((str(path), media_type))
@@ -415,9 +418,8 @@ def test_zernio_linked_instagram_uses_zernio_without_graph(monkeypatch, conn, co
     assert out.result == "posted", out.detail
     assert out.detail == "instagram-post-123"
     assert fake_client.calls == []
-    assert FakeZernio  # the Zernio adapter, not the Meta Graph client, handled the post
+    assert FakeZernio.instances[0].posts[0]["first_comment"] == "Read the details in the caption."
     row = _reload(conn, pub["id"])
     assert row["status"] == "posted"
     assert row["remote_post_id"] == "instagram-post-123"
-    assert FakeZernio  # the provider received the configured first comment
     assert row["first_comment_status"] == "pending"
