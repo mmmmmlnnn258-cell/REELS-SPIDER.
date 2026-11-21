@@ -1046,38 +1046,78 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 _send(client, token, chat_id, "انتهت صلاحية المعاينة أو سبق تأكيدها/إلغاؤها؛ افتح المحادثة وأنشئ معاينة جديدة.", _menu())
                 return True
             try:
-                channel = conn.execute("""SELECT id,platform,remote_account_id,linked_page_id,access_token,instagram_auth_method FROM channels
+                provider_label = "Meta"
+                channel = conn.execute("""SELECT id,platform,remote_account_id,linked_page_id,access_token,
+                    instagram_auth_method,zernio_account_id,zernio_profile_id FROM channels
                     WHERE id=? AND platform='instagram' AND is_active=1""", (row["channel_id"],)).fetchone()
-                if channel is None or graph_client_for is None:
-                    raise RuntimeError("قناة Instagram غير متصلة أو عميل Meta غير متاح.")
-                graph = graph_client_for(channel)
-                messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(channel, graph) else str(channel["linked_page_id"] or "")
-                if not messaging_id:
-                    raise RuntimeError("يلزم ربط صفحة Facebook لإرسال الرسائل عبر Facebook Login.")
-                # Re-fetch at confirmation time: the inbox preview may have been opened
-                # while the 24-hour window was valid and confirmed after it closed.
-                _, latest_messages = graph.get_instagram_conversation_messages(
-                    row["conversation_id"], channel["access_token"])
-                window_open, window_error = _instagram_dm_window(
-                    latest_messages, row["recipient_id"], now_dt)
-                if not window_open:
-                    with conn:
-                        conn.execute(
-                            "UPDATE telegram_dm_outbox SET status='cancelled',last_error=?,updated_at=? WHERE id=?",
-                            (window_error, datetime.now(timezone.utc).isoformat(), outbox_id),
-                        )
-                    from .operation_log import mark_operation_notified, record_manual_dm_outcome
-                    event = record_manual_dm_outcome(
-                        conn, outbox_id, status="info", detail=window_error)
-                    _send(client, token, chat_id, f"⛔ {window_error}", _menu())
-                    if event:
-                        mark_operation_notified(conn, int(event["id"]))
-                    return True
-                result = graph.send_instagram_direct_message(
-                    messaging_id, row["recipient_id"], row["message_text"], channel["access_token"])
-                meta_message_id = str(result.get("message_id") or result.get("id") or "")
-                if not meta_message_id:
-                    raise RuntimeError("Meta returned no message ID; delivery cannot be confirmed safely.")
+                if channel is None:
+                    raise RuntimeError("قناة Instagram غير متصلة.")
+                if channel["zernio_account_id"]:
+                    from .zernio_client import ZernioClient
+                    provider_label = "Zernio"
+                    zernio = ZernioClient()
+                    latest_messages = zernio.list_inbox_messages(
+                        row["conversation_id"], account_id=channel["zernio_account_id"],
+                        limit=100, sort_order="desc",
+                    )
+                    window_open, window_error = _zernio_dm_window(latest_messages, now_dt)
+                    if not window_open:
+                        with conn:
+                            conn.execute(
+                                "UPDATE telegram_dm_outbox SET status='cancelled',last_error=?,updated_at=? WHERE id=?",
+                                (window_error, datetime.now(timezone.utc).isoformat(), outbox_id),
+                            )
+                        from .operation_log import mark_operation_notified, record_manual_dm_outcome
+                        event = record_manual_dm_outcome(
+                            conn, outbox_id, status="info", detail=window_error)
+                        _send(client, token, chat_id, f"⛔ {window_error}", _menu())
+                        if event:
+                            mark_operation_notified(conn, int(event["id"]))
+                        return True
+                    result = zernio.send_inbox_message(
+                        row["conversation_id"],
+                        account_id=channel["zernio_account_id"],
+                        message=row["message_text"],
+                        idempotency_key=f"black-spider-human-dm-{outbox_id}",
+                    )
+                    sent_message = result.get("message") or result.get("data", {}).get("message") or {}
+                    meta_message_id = str(
+                        sent_message.get("id") or sent_message.get("messageId")
+                        or result.get("messageId") or ""
+                    ) if isinstance(sent_message, dict) else str(result.get("messageId") or "")
+                    if not meta_message_id:
+                        raise RuntimeError("Zernio accepted the request but returned no message ID; delivery cannot be confirmed safely.")
+                else:
+                    if graph_client_for is None:
+                        raise RuntimeError("عميل Meta غير متاح لهذه القناة.")
+                    graph = graph_client_for(channel)
+                    messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(channel, graph) else str(channel["linked_page_id"] or "")
+                    if not messaging_id:
+                        raise RuntimeError("يلزم ربط صفحة Facebook لإرسال الرسائل عبر Facebook Login.")
+                    # Re-fetch at confirmation time: the inbox preview may have been opened
+                    # while the 24-hour window was valid and confirmed after it closed.
+                    _, latest_messages = graph.get_instagram_conversation_messages(
+                        row["conversation_id"], channel["access_token"])
+                    window_open, window_error = _instagram_dm_window(
+                        latest_messages, row["recipient_id"], now_dt)
+                    if not window_open:
+                        with conn:
+                            conn.execute(
+                                "UPDATE telegram_dm_outbox SET status='cancelled',last_error=?,updated_at=? WHERE id=?",
+                                (window_error, datetime.now(timezone.utc).isoformat(), outbox_id),
+                            )
+                        from .operation_log import mark_operation_notified, record_manual_dm_outcome
+                        event = record_manual_dm_outcome(
+                            conn, outbox_id, status="info", detail=window_error)
+                        _send(client, token, chat_id, f"⛔ {window_error}", _menu())
+                        if event:
+                            mark_operation_notified(conn, int(event["id"]))
+                        return True
+                    result = graph.send_instagram_direct_message(
+                        messaging_id, row["recipient_id"], row["message_text"], channel["access_token"])
+                    meta_message_id = str(result.get("message_id") or result.get("id") or "")
+                    if not meta_message_id:
+                        raise RuntimeError("Meta returned no message ID; delivery cannot be confirmed safely.")
             except Exception as exc:
                 from .redact import redact
                 safe_error = redact(str(exc))[:500]
@@ -1103,9 +1143,9 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             from .operation_log import mark_operation_notified, record_manual_dm_outcome
             event = record_manual_dm_outcome(
                 conn, outbox_id, status="success",
-                detail=f"أكدت Meta الإرسال. معرّف الرسالة: {meta_message_id}",
+                detail=f"أكدت {provider_label} الإرسال. معرّف الرسالة: {meta_message_id}",
             )
-            _send(client, token, chat_id, f"✅ أكدت Meta إرسال الرد بنجاح. رقم الرسالة: {meta_message_id}", _menu())
+            _send(client, token, chat_id, f"✅ أكدت {provider_label} إرسال الرد بنجاح. رقم الرسالة: {meta_message_id}", _menu())
             if event:
                 mark_operation_notified(conn, int(event["id"]))
             return True
