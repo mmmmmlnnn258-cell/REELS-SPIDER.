@@ -144,7 +144,7 @@ export default async function ChannelsPage({
         {params.zernio_connected === "1" ? (
           <div className="rounded-card border border-status-posted bg-surface-muted p-4 text-sm text-ink-soft">
             <span className="font-medium text-ink">Instagram authorized through Zernio.</span>{" "}
-            @{params.zernio_account || "account"} was linked to the existing channel. The publishing adapter is in place but has not been live-tested; comments and inbox are not connected yet.
+            @{params.zernio_account || "account"} was linked to the existing channel. Publishing, comment automation and inbox adapters are implemented but have not been live-tested.
           </div>
         ) : null}
         {params.zernio_error ? (
@@ -294,7 +294,7 @@ export default async function ChannelsPage({
                         <p className="text-xs font-medium text-ink-soft">Instagram connection</p>
                         <p className="mt-0.5 text-[11px] text-muted">
                           {c.zernio_account_id
-                            ? "Instagram is authorized through Zernio as @{c.zernio_username || c.account_name}. The Zernio publishing adapter is implemented but not live-tested; comments and inbox are not connected yet."
+                            ? "Instagram is authorized through Zernio as @{c.zernio_username || c.account_name}. Zernio publishing, comment automation and inbox adapters are implemented but not live-tested."
                             : c.has_access_token && c.remote_account_id
                               ? "This channel is linked. Reconnect only if its access needs refreshing."
                               : "Connect this existing channel securely. Its name, timezone, queue and history will be kept."}
