@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { publicAppOrigin } from "@/lib/public-app-url";
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getInstagramAccount, ZernioApiError } from "@/lib/zernio";
@@ -7,7 +8,7 @@ export const runtime = "nodejs";
 const TICKET_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
 
 function returnToChannels(req: NextRequest, result: Record<string, string>) {
-  const url = new URL("/channels", req.nextUrl.origin);
+  const url = new URL("/channels", publicAppOrigin());
   for (const [key, value] of Object.entries(result)) url.searchParams.set(key, value);
   const response = NextResponse.redirect(url);
   response.headers.set("Cache-Control", "no-store");
