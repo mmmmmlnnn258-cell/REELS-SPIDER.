@@ -22,6 +22,10 @@ class Session:
         self.calls.append((method, url, kwargs))
         return self.responses.pop(0)
 
+    def put(self, url, **kwargs):
+        self.calls.append(("PUT", url, kwargs))
+        return self.responses.pop(0)
+
 
 def test_instagram_connect_uses_hosted_oauth_and_bearer_auth():
     session = Session([Response(payload={"authUrl": "https://www.instagram.com/oauth/authorize?state=x"})])
@@ -72,3 +76,47 @@ def test_create_profile_sends_idempotency_key():
     assert client.create_profile("BLACK-SPIDER", idempotency_key="setup-once") == "new-profile"
     assert session.calls[0][0] == "POST"
     assert session.calls[0][2]["headers"]["Idempotency-Key"] == "setup-once"
+
+    
+def test_create_post_is_publish_now_and_idempotent():
+    session = Session([Response(payload={
+        "post": {
+            "_id": "zernio-post-1",
+            "status": "published",
+            "platforms": [{"platform": "instagram", "status": "published", "platformPostId": "ig-post-1"}],
+        }
+    })])
+    client = ZernioClient("private-key", session=session)
+    result = client.create_post(
+        content="Caption",
+        account_id="ig-account-1",
+        media_items=[{"url": "https://media.zernio.com/file.jpg", "type": "image"}],
+        idempotency_key="black-spider-publication-42",
+    )
+    assert result["remote_post_id"] == "ig-post-1"
+    method, url, kwargs = session.calls[0]
+    assert method == "POST" and url.endswith("/posts")
+    assert kwargs["headers"]["Idempotency-Key"] == "black-spider-publication-42"
+    assert kwargs["json"]["publishNow"] is True
+    assert kwargs["json"]["platforms"] == [{"platform": "instagram", "accountId": "ig-account-1"}]
+
+
+def test_upload_media_uses_presigned_put_without_api_key(tmp_path):
+    media = tmp_path / "sample.jpg"
+    media.write_bytes(b"image-bytes")
+    session = Session([
+        Response(payload={
+            "uploadUrl": "https://storage.example/upload?signature=secret",
+            "publicUrl": "https://media.zernio.com/sample.jpg",
+        }),
+        Response(status=200),
+    ])
+    client = ZernioClient("private-key", session=session)
+    result = client.upload_media(media)
+    assert result == {"url": "https://media.zernio.com/sample.jpg", "type": "image"}
+    assert session.calls[0][0] == "POST"
+    assert session.calls[0][1].endswith("/media/presign")
+    assert session.calls[0][2]["headers"]["Authorization"] == "Bearer private-key"
+    assert session.calls[1][0] == "PUT"
+    assert "Authorization" not in session.calls[1][2]["headers"]
+    assert session.calls[1][2]["headers"]["Content-Type"] == "image/jpeg"
