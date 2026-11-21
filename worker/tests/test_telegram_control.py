@@ -2,7 +2,10 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from worker.telegram_control import process_control_update
+from worker.telegram_control import (
+    process_control_update, _zernio_dm_window,
+    _connected_ig_channels, _telegram_can_access_comment_rule,
+)
 
 
 class FakeTelegram:
@@ -601,7 +604,7 @@ def test_add_account_callback_creates_channel_free_instagram_ticket(conn, config
     assert "channel_id" not in row.keys()
     keyboard = client.messages[0][2]["inline_keyboard"]
     assert keyboard[0][0]["url"].startswith(
-        "https://dashboard.example.test/api/channels/instagram/telegram?ticket="
+        "https://dashboard.example.test/api/channels/instagram/zernio/telegram?ticket="
     )
 
 
@@ -670,3 +673,303 @@ def test_accounts_screen_exposes_add_instagram_action(conn, config):
         button["callback_data"] == "bs:account:add"
         for row in keyboard for button in row
     )
+
+
+def test_zernio_dm_window_requires_recent_inbound_message():
+    now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
+    allowed, error = _zernio_dm_window([
+        {"direction": "incoming", "createdAt": "2026-11-21T11:30:00Z"}
+    ], now)
+    assert allowed is True
+    assert error == ""
+
+
+def test_zernio_dm_window_fails_closed_when_last_inbound_is_old_or_missing():
+    now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
+    allowed, error = _zernio_dm_window([
+        {"direction": "incoming", "createdAt": "2026-11-20T10:00:00Z"},
+        {"direction": "outgoing", "createdAt": "2026-11-21T11:59:00Z"},
+    ], now)
+    assert allowed is False
+    assert "24 ساعة" in error
+    allowed, error = _zernio_dm_window([
+        {"direction": "outgoing", "createdAt": "2026-11-21T11:59:00Z"}
+    ], now)
+    assert allowed is False
+    assert "لم تصل رسالة واردة" in error
+
+
+def test_telegram_dm_list_reads_zernio_conversations(monkeypatch, conn, config):
+    channel_id = conn.execute(
+        """INSERT INTO channels
+           (platform,account_name,zernio_account_id,zernio_profile_id,
+            zernio_telegram_chat_id,zernio_telegram_user_id,is_active)
+           VALUES ('instagram','zernio channel','z-account','z-profile',
+                   '7441755677','7441755677',1)"""
+    ).lastrowid
+    conn.commit()
+    class FakeZernio:
+        def __init__(self):
+            pass
+        def list_inbox_conversations(self, *, account_id, limit):
+            assert account_id == "z-account"
+            return [{
+                "id": "thread-z-1", "participantName": "Customer",
+                "participantId": "customer-1", "updatedTime": "2026-11-21T11:00:00Z",
+                "unreadCount": 2,
+            }]
+    monkeypatch.setattr("worker.zernio_client.ZernioClient", FakeZernio)
+    client = FakeTelegram()
+    assert process_control_update(conn, cfg(config), client, callback(data="bs:dms"), graph_client_for=None)
+    assert "محادثة عبر Zernio" in client.messages[0][1]
+    ref = conn.execute(
+        "SELECT conversation_id FROM telegram_dm_conversation_refs WHERE channel_id=?",
+        (channel_id,),
+    ).fetchone()
+    assert ref["conversation_id"] == "thread-z-1"
+
+
+def test_telegram_comment_inbox_reads_zernio_comments(monkeypatch, conn, config):
+    channel_id = conn.execute(
+        """INSERT INTO channels
+           (platform,account_name,zernio_account_id,zernio_profile_id,
+            zernio_telegram_chat_id,zernio_telegram_user_id,is_active)
+           VALUES ('instagram','zernio channel','z-account','z-profile',
+                   '7441755677','7441755677',1)"""
+    ).lastrowid
+    rule_id = conn.execute(
+        """INSERT INTO instagram_comment_rules(channel_id,media_id,keywords_json,private_reply_text,enabled)
+           VALUES (?, 'ig-media-1', '[\"hello\"]', 'Welcome', 1)""", (channel_id,)
+    ).lastrowid
+    conn.commit()
+    class FakeZernio:
+        def __init__(self):
+            pass
+        def list_post_comments(self, post_id, *, account_id, limit):
+            assert post_id == "ig-media-1"
+            assert account_id == "z-account"
+            return [{"id": "comment-1", "text": "hello", "author": {"username": "customer"}}]
+    monkeypatch.setattr("worker.zernio_client.ZernioClient", FakeZernio)
+    client = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), client, callback(data=f"bs:comment:fetch:{rule_id}"),
+        graph_client_for=None,
+    )
+    assert "customer: hello" in client.messages[0][1]
+
+
+def test_zernio_comment_rule_can_be_toggled_from_telegram(conn, config):
+    channel_id = conn.execute(
+        """INSERT INTO channels
+           (platform,account_name,zernio_account_id,zernio_profile_id,
+            zernio_telegram_chat_id,zernio_telegram_user_id,is_active)
+           VALUES ('instagram','zernio channel','z-account','z-profile',
+                   '7441755677','7441755677',1)"""
+    ).lastrowid
+    rule_id = conn.execute(
+        """INSERT INTO instagram_comment_rules(channel_id,media_id,keywords_json,private_reply_text,enabled)
+           VALUES (?, 'ig-media-1', '[\"hello\"]', 'Welcome', 0)""", (channel_id,)
+    ).lastrowid
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), client, callback(data=f"bs:comment:{rule_id}"),
+        graph_client_for=None,
+    )
+    assert conn.execute(
+        "SELECT enabled FROM instagram_comment_rules WHERE id=?", (rule_id,)
+    ).fetchone()[0] == 1
+    assert "تم حفظ حالة القاعدة محلياً" in client.messages[0][1]
+
+
+def test_zernio_account_appears_in_telegram_account_hub(conn, config):
+    channel = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_username, zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'spider_test', 'zernio-ig-1', 'profile-1',
+                   'spider_test', '7441755677', '7441755677', 1)"""
+    ).lastrowid
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(conn, cfg(config), client, callback(data="bs:accounts"))
+    assert "@spider_test" in client.messages[0][1]
+    assert "zernio-ig-1" in client.messages[0][1]
+    buttons = client.messages[0][2]["inline_keyboard"]
+    assert any(
+        button["callback_data"] == f"bs:account:select:z:{channel}"
+        for row in buttons for button in row
+    )
+
+
+def test_zernio_account_can_be_selected_and_is_scoped_to_telegram_owner(conn, config):
+    channel = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_username, zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'spider_test', 'zernio-ig-2', 'profile-1',
+                   'spider_test', '7441755677', '7441755677', 1)"""
+    ).lastrowid
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), client, callback(data=f"bs:account:select:z:{channel}")
+    )
+    selected = conn.execute(
+        """SELECT selected_instagram_account_id, selected_zernio_channel_id
+             FROM telegram_account_preferences
+            WHERE telegram_chat_id='7441755677' AND telegram_user_id='7441755677'"""
+    ).fetchone()
+    assert selected["selected_instagram_account_id"] is None
+    assert selected["selected_zernio_channel_id"] == channel
+    assert "تم اختيار حساب Instagram @spider_test" in client.messages[0][1]
+
+    # A different Telegram identity cannot select another user's Zernio account.
+    other = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), other,
+        callback(update_id=902, data=f"bs:account:select:z:{channel}", sender_id=999),
+    )
+    assert other.messages == []
+    assert other.answered == [("cb-902", "غير مصرح")]
+
+
+def test_selected_zernio_account_scopes_telegram_inbox_channels(conn):
+    first = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'first', 'z-1', 'p-1', '7441755677', '7441755677', 1)"""
+    ).lastrowid
+    conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'second', 'z-2', 'p-1', '7441755677', '7441755677', 1)"""
+    )
+    conn.execute(
+        """INSERT INTO telegram_account_preferences
+           (telegram_chat_id, telegram_user_id, selected_zernio_channel_id, updated_at)
+           VALUES ('7441755677', '7441755677', ?, '2026-11-21T00:00:00Z')""",
+        (first,),
+    )
+    conn.commit()
+    channels = _connected_ig_channels(conn, "7441755677", "7441755677")
+    assert [int(row["id"]) for row in channels] == [first]
+
+
+def test_zernio_dm_channel_access_requires_owner_and_selected_account(conn):
+    owned = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'owned', 'z-owned-dm', 'p-1',
+                   '7441755677', '7441755677', 1)"""
+    ).lastrowid
+    other = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'other', 'z-other-dm', 'p-1',
+                   '999', '999', 1)"""
+    ).lastrowid
+    conn.commit()
+    from worker.telegram_control import _telegram_can_access_zernio_channel
+    assert _telegram_can_access_zernio_channel(conn, owned, "7441755677", "7441755677")
+    assert not _telegram_can_access_zernio_channel(conn, owned, "7441755677", "999")
+    assert not _telegram_can_access_zernio_channel(conn, other, "7441755677", "7441755677")
+
+    conn.execute(
+        """INSERT INTO telegram_account_preferences
+           (telegram_chat_id, telegram_user_id, selected_zernio_channel_id, updated_at)
+           VALUES ('7441755677', '7441755677', ?, '2026-11-21T00:00:00Z')""",
+        (other,),
+    )
+    conn.commit()
+    assert not _telegram_can_access_zernio_channel(conn, owned, "7441755677", "7441755677")
+
+
+def test_zernio_dm_legacy_numeric_callback_cannot_open_another_users_account(conn, config):
+    channel_id = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'other', 'z-other-dm', 'p-1', '999', '999', 1)"""
+    ).lastrowid
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), client,
+        callback(data=f"bs:dm:view:{channel_id}:123456789"), graph_client_for=None,
+    )
+    assert "لا تملك صلاحية فتح هذه المحادثة" in client.messages[0][1]
+
+
+def test_comment_rule_access_requires_owned_selected_zernio_account(conn):
+    channel = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'owned', 'z-owned', 'p-1',
+                   '7441755677', '7441755677', 1)"""
+    ).lastrowid
+    rule = conn.execute(
+        """INSERT INTO instagram_comment_rules(channel_id, media_id, keywords_json, enabled)
+           VALUES (?, 'media-owned', '[]', 1)""",
+        (channel,),
+    ).lastrowid
+    conn.commit()
+    assert _telegram_can_access_comment_rule(conn, rule, "7441755677", "7441755677")
+    assert not _telegram_can_access_comment_rule(conn, rule, "7441755677", "999")
+    other_channel = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'other-owner', 'z-other', 'p-1',
+                   '999', '999', 1)"""
+    ).lastrowid
+    conn.execute(
+        """INSERT INTO telegram_account_preferences
+           (telegram_chat_id, telegram_user_id, selected_zernio_channel_id, updated_at)
+           VALUES ('7441755677', '7441755677', ?, '2026-11-21T00:00:00Z')""",
+        (other_channel,),
+    )
+    conn.commit()
+    assert not _telegram_can_access_comment_rule(conn, rule, "7441755677", "7441755677")
+
+
+def test_publish_now_lists_and_advances_owned_zernio_publication(conn, config):
+    channel = conn.execute(
+        """INSERT INTO channels
+           (platform, account_name, zernio_account_id, zernio_profile_id,
+            zernio_telegram_chat_id, zernio_telegram_user_id, is_active)
+           VALUES ('instagram', 'z_publish', 'z-publish-1', 'p-1',
+                   '7441755677', '7441755677', 1)"""
+    ).lastrowid
+    post = conn.execute(
+        "INSERT INTO posts(caption, post_type, status) VALUES ('Zernio caption', 'reel', 'scheduled')"
+    ).lastrowid
+    publication = conn.execute(
+        """INSERT INTO publications(post_id, channel_id, scheduled_at, status)
+           VALUES (?, ?, '2099-01-01T12:00:00Z', 'scheduled')""",
+        (post, channel),
+    ).lastrowid
+    conn.execute(
+        """INSERT INTO telegram_account_preferences
+           (telegram_chat_id, telegram_user_id, selected_zernio_channel_id, updated_at)
+           VALUES ('7441755677', '7441755677', ?, '2026-11-21T00:00:00Z')""",
+        (channel,),
+    )
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(conn, cfg(config), client, callback(data="bs:publish"))
+    assert "Zernio caption" in client.messages[0][1]
+    assert process_control_update(
+        conn, cfg(config), client,
+        callback(update_id=903, data=f"bs:publish:{publication}"),
+    )
+    row = conn.execute(
+        "SELECT status, scheduled_at FROM publications WHERE id=?", (publication,)
+    ).fetchone()
+    assert row["status"] == "scheduled"
+    assert row["scheduled_at"] < "2099-01-01T12:00:00Z"

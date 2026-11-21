@@ -443,3 +443,37 @@ def test_a_manual_refresh_request_overrides_the_interval(conn, config):
     )
     conn.commit()
     assert run_media_sync(conn, config, now=NOW, client_for=lambda p: FakeMediaClient([[_item("a")]])) == 1
+
+
+def test_zernio_linked_channel_syncs_media_without_meta_access_token(conn, config, monkeypatch):
+    channel_id = conn.execute(
+        """INSERT INTO channels
+             (platform, account_name, zernio_account_id, zernio_profile_id, is_active)
+           VALUES ('instagram', 'Zernio account', 'z-account', 'z-profile', 1)"""
+    ).lastrowid
+    conn.commit()
+    class FakeZernio:
+        def list_analytics_posts(self, *, account_id, page, limit, from_date, to_date):
+            assert account_id == "z-account"
+            assert page == 1
+            return ([{
+                "content": "A Reel", "publishedAt": NOW.isoformat(),
+                "mediaType": "video", "mediaProductType": "REELS",
+                "thumbnailUrl": "https://cdn.test/reel.jpg",
+                "platformAnalytics": [{
+                    "platform": "instagram", "accountId": "z-account",
+                    "platformPostId": "ig-media-1",
+                    "platformPostUrl": "https://instagram.com/reel/abc",
+                }],
+            }], None)
+    monkeypatch.setattr("worker.zernio_client.ZernioClient", FakeZernio)
+    assert run_media_sync(conn, config, now=NOW, client_for=lambda _ch: None) == 1
+    row = conn.execute(
+        "SELECT * FROM remote_media WHERE channel_id=? AND remote_post_id='ig-media-1'",
+        (channel_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["media_type"] == "VIDEO"
+    assert row["media_product_type"] == "REELS"
+    assert row["caption"] == "A Reel"
+    assert row["permalink"] == "https://instagram.com/reel/abc"

@@ -27,17 +27,23 @@ def database():
     conn.row_factory = sqlite3.Row
     conn.executescript("""
       CREATE TABLE channels(id INTEGER PRIMARY KEY, platform TEXT, is_active INTEGER,
-        access_token TEXT, remote_account_id TEXT, account_name TEXT, instagram_auth_method TEXT);
+        access_token TEXT, remote_account_id TEXT, account_name TEXT, instagram_auth_method TEXT,
+        zernio_account_id TEXT, zernio_profile_id TEXT);
       CREATE TABLE instagram_comment_rules(id INTEGER PRIMARY KEY, channel_id INTEGER,
         media_id TEXT, keywords_json TEXT, link_url TEXT, private_reply_text TEXT,
-        public_reply_text TEXT, enabled INTEGER, last_polled_at TEXT, last_error TEXT);
+        public_reply_text TEXT, enabled INTEGER, last_polled_at TEXT, last_error TEXT,
+        zernio_automation_id TEXT, zernio_config_hash TEXT, zernio_media_id TEXT);
       CREATE TABLE instagram_comment_events(comment_id TEXT PRIMARY KEY, rule_id INTEGER,
         channel_id INTEGER, media_id TEXT, comment_text TEXT, status TEXT,
         private_reply_id TEXT, public_reply_id TEXT, last_error TEXT,
         created_at TEXT, updated_at TEXT);
     """)
-    conn.execute("INSERT INTO channels VALUES (1,'instagram',1,'token','ig-1','creator','instagram_login')")
+    conn.execute("""INSERT INTO channels
+      (id,platform,is_active,access_token,remote_account_id,account_name,instagram_auth_method)
+      VALUES (1,'instagram',1,'token','ig-1','creator','instagram_login')""")
     conn.execute("""INSERT INTO instagram_comment_rules
+      (id,channel_id,media_id,keywords_json,link_url,private_reply_text,public_reply_text,
+       enabled,last_polled_at,last_error)
       VALUES (1,1,'reel-1',?,'https://example.com','Here {link}','Sent ❤️',1,NULL,NULL)""",
       (json.dumps(["تم", "الرابط"]),))
     conn.commit()
@@ -148,3 +154,69 @@ def test_comment_that_did_not_match_can_match_after_rule_keywords_change():
     run_comment_automation(conn, None, now, client_for=lambda _: client)
     assert len(client.private) == 1
     assert conn.execute("SELECT status FROM instagram_comment_events").fetchone()[0] == "sent"
+
+
+def test_zernio_rule_creates_remote_automation_and_persists_id(monkeypatch):
+    conn = database()
+    conn.execute("""UPDATE channels SET access_token=NULL, remote_account_id=NULL,
+        zernio_account_id='z-account', zernio_profile_id='z-profile' WHERE id=1""")
+    conn.commit()
+    class FakeZernio:
+        created = []
+        def __init__(self):
+            pass
+        def list_comment_automations(self, *, profile_id):
+            assert profile_id == "z-profile"
+            return []
+        def create_comment_automation(self, body):
+            self.created.append(body)
+            return {"id": "z-automation-1"}
+        def update_comment_automation(self, automation_id, body):
+            raise AssertionError("new rule should be created, not updated")
+    fake = FakeZernio()
+    monkeypatch.setattr("worker.zernio_client.ZernioClient", lambda: fake)
+    called = []
+    count = run_comment_automation(conn, None, datetime(2026,11,17,11,tzinfo=timezone.utc),
+                                   client_for=lambda _: called.append(True))
+    assert count == 0
+    assert called == []
+    body = fake.created[0]
+    assert body["profileId"] == "z-profile"
+    assert body["accountId"] == "z-account"
+    assert body["platformPostId"] == "reel-1"
+    assert body["keywords"] == ["تم", "الرابط"]
+    assert body["matchMode"] == "word"
+    assert body["dmMessage"] == "Here https://example.com"
+    assert body["commentReply"] == "Sent ❤️"
+    assert body["repeatPolicy"] == {"mode": "every_comment"}
+    assert body["isActive"] is True
+
+    row = conn.execute("SELECT zernio_automation_id,zernio_config_hash,last_error FROM instagram_comment_rules").fetchone()
+    assert row["zernio_automation_id"] == "z-automation-1"
+    assert row["zernio_config_hash"]
+    assert row["last_error"] is None
+
+
+def test_zernio_rule_toggle_updates_existing_remote_automation(monkeypatch):
+    conn = database()
+    conn.execute("""UPDATE channels SET access_token=NULL, remote_account_id=NULL,
+        zernio_account_id='z-account', zernio_profile_id='z-profile' WHERE id=1""")
+    conn.execute("""UPDATE instagram_comment_rules
+        SET zernio_automation_id='z-automation-1', zernio_config_hash='old-hash', enabled=0
+        WHERE id=1""")
+    conn.commit()
+    class FakeZernio:
+        updated = []
+        def __init__(self):
+            pass
+        def update_comment_automation(self, automation_id, body):
+            self.updated.append((automation_id, body))
+            return {"id": automation_id}
+    fake = FakeZernio()
+    monkeypatch.setattr("worker.zernio_client.ZernioClient", lambda: fake)
+    run_comment_automation(conn, None, datetime(2026,11,17,11,tzinfo=timezone.utc))
+    assert fake.updated[0][0] == "z-automation-1"
+    assert fake.updated[0][1]["isActive"] is False
+    row = conn.execute("SELECT zernio_config_hash,last_error FROM instagram_comment_rules").fetchone()
+    assert row["zernio_config_hash"] != "old-hash"
+    assert row["last_error"] is None

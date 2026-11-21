@@ -375,3 +375,51 @@ def test_network_failure_during_publish_never_persists_the_token_to_last_error(
     assert TOKEN_VALUE not in row["last_error"]
     # still tells a human what actually went wrong
     assert "graph.facebook.com" in row["last_error"] or "connection" in row["last_error"].lower()
+
+
+def test_zernio_linked_instagram_uses_zernio_without_graph(monkeypatch, conn, config, fake_client, make_publication):
+    from pathlib import Path
+
+    class FakeZernio:
+        instances = []
+
+        def __init__(self):
+            self.uploaded = []
+            self.posts = []
+            self.instances.append(self)
+
+        def upload_media(self, path, *, media_type=None):
+            self.uploaded.append((str(path), media_type))
+            return {"url": "https://media.zernio.com/uploaded.jpg", "type": "image"}
+
+        def create_post(self, **kwargs):
+            self.posts.append(kwargs)
+            return {"remote_post_id": "instagram-post-123"}
+
+    monkeypatch.setattr("worker.zernio_client.ZernioClient", FakeZernio)
+    pub = make_publication(post_type="single", n_assets=1, public_url=None, with_token=False)
+    conn.execute(
+        "UPDATE posts SET first_comment=? WHERE id=?",
+        ("Read the details in the caption.", pub["post_id"]),
+    )
+    conn.commit()
+    channel_id = pub["channel_id"]
+    conn.execute(
+        "UPDATE channels SET zernio_account_id=?, zernio_profile_id=?, remote_account_id=NULL, access_token=NULL WHERE id=?",
+        ("zernio-account-123", "zernio-profile-123", channel_id),
+    )
+    asset = conn.execute("SELECT id, storage_path FROM assets WHERE id=(SELECT asset_id FROM post_assets WHERE post_id=? LIMIT 1)", (pub["post_id"],)).fetchone()
+    local_path = config.asset_storage_dir / asset["storage_path"]
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    local_path.write_bytes(b"test-image")
+
+    out = publish_one(conn, pub, config, fake_client, dry_run=False, now=NOW)
+
+    assert out.result == "posted", out.detail
+    assert out.detail == "instagram-post-123"
+    assert fake_client.calls == []
+    assert FakeZernio.instances[0].posts[0]["first_comment"] == "Read the details in the caption."
+    row = _reload(conn, pub["id"])
+    assert row["status"] == "posted"
+    assert row["remote_post_id"] == "instagram-post-123"
+    assert row["first_comment_status"] == "pending"

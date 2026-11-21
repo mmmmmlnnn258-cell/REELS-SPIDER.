@@ -76,6 +76,32 @@ def _instagram_dm_window(messages: list[dict], recipient_id: str,
     return True, ""
 
 
+def _zernio_dm_window(messages: list[dict], now: datetime) -> tuple[bool, str]:
+    """Fail closed unless Zernio confirms an inbound Instagram message in 24 hours."""
+    inbound = []
+    for message in messages:
+        if message.get("direction") != "incoming":
+            continue
+        raw = message.get("createdAt")
+        if not raw:
+            continue
+        try:
+            stamp = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            continue
+        inbound.append(stamp.astimezone(timezone.utc))
+    if not inbound:
+        return False, "لم تصل رسالة واردة حديثة موثقة؛ لم يتم إرسال الرد."
+    age = now.astimezone(timezone.utc) - max(inbound)
+    if age < timedelta(minutes=-5):
+        return False, "وقت آخر رسالة واردة غير صالح؛ لم يتم إرسال الرد."
+    if age > timedelta(hours=24):
+        return False, "انتهت مهلة Instagram البالغة 24 ساعة منذ آخر رسالة واردة؛ اطلب من العميل مراسلتك مجدداً."
+    return True, ""
+
+
 def _local_stamp(value: str, timezone_name: str) -> str:
     try:
         stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -122,9 +148,16 @@ def _schedule_rows(conn):
     ).fetchall()
 
 
-def _schedule_list(conn, client, token: str, chat_id: str, page: int = 0):
+def _schedule_list(conn, client, token: str, chat_id: str, sender_id: str, page: int = 0):
+    selected_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
+    scope = """(c.zernio_account_id IS NULL OR (
+        c.zernio_telegram_chat_id=? AND c.zernio_telegram_user_id=?
+        AND (? IS NULL OR c.id=?)))"""
+    scope_args = (chat_id, sender_id, selected_id, selected_id)
     total = conn.execute(
-        "SELECT COUNT(*) FROM publications WHERE status IN ('scheduled', 'pending_approval')"
+        """SELECT COUNT(*) FROM publications pub JOIN channels c ON c.id=pub.channel_id
+            WHERE pub.status IN ('scheduled', 'pending_approval') AND """ + scope,
+        scope_args,
     ).fetchone()[0]
     page_size = 8
     page_count = max(1, (total + page_size - 1) // page_size)
@@ -135,9 +168,9 @@ def _schedule_list(conn, client, token: str, chat_id: str, page: int = 0):
              FROM publications pub
              JOIN posts p ON p.id = pub.post_id
              JOIN channels c ON c.id = pub.channel_id
-            WHERE pub.status IN ('scheduled', 'pending_approval')
+            WHERE pub.status IN ('scheduled', 'pending_approval') AND """ + scope + """
             ORDER BY pub.scheduled_at ASC, pub.id ASC LIMIT ? OFFSET ?""",
-        (page_size, page * page_size),
+        (*scope_args, page_size, page * page_size),
     ).fetchall()
     if not rows:
         _send(client, token, chat_id, "📅 لا توجد منشورات مجدولة حالياً.", {
@@ -147,7 +180,7 @@ def _schedule_list(conn, client, token: str, chat_id: str, page: int = 0):
     lines = [f"📅 المنشورات المجدولة الحالية (صفحة {page + 1}/{page_count}):"]
     keyboard = []
     for row in rows:
-        caption = (row["caption"] or "بدون وصف").replace("\\n", " ")[:48]
+        caption = (row["caption"] or "بدون وصف").replace("\n", " ")[:48]
         local_time = _local_stamp(row["scheduled_at"], row["timezone"])
         state = "موقوف مؤقتاً" if row["is_held"] else (
             "بانتظار الموافقة" if row["status"] == "pending_approval" else "مجدول"
@@ -165,15 +198,19 @@ def _schedule_list(conn, client, token: str, chat_id: str, page: int = 0):
     keyboard.append([{"text": "↩ القائمة", "callback_data": "bs:menu"}])
     _send(client, token, chat_id, "\n".join(lines), {"inline_keyboard": keyboard})
 
-def _schedule_detail(conn, client, token: str, chat_id: str, publication_id: int, page: int = 0):
+def _schedule_detail(conn, client, token: str, chat_id: str, sender_id: str, publication_id: int, page: int = 0):
+    selected_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
     row = conn.execute(
         """SELECT pub.id, pub.status, pub.scheduled_at, pub.is_held, pub.post_id,
                   p.caption, p.post_type, c.account_name, c.timezone
              FROM publications pub
              JOIN posts p ON p.id = pub.post_id
              JOIN channels c ON c.id = pub.channel_id
-            WHERE pub.id = ? AND pub.status IN ('scheduled', 'pending_approval')""",
-        (publication_id,),
+            WHERE pub.id = ? AND pub.status IN ('scheduled', 'pending_approval')
+              AND (c.zernio_account_id IS NULL OR (
+                c.zernio_telegram_chat_id=? AND c.zernio_telegram_user_id=?
+                AND (? IS NULL OR c.id=?)))""",
+        (publication_id, chat_id, sender_id, selected_id, selected_id),
     ).fetchone()
     if row is None:
         _send(client, token, chat_id, "هذا الموعد لم يعد مجدولاً.", {
@@ -234,19 +271,100 @@ def _comment_permission_hint(channel, graph) -> str:
     return "تحقق من صلاحية instagram_manage_comments."
 
 
-def _connected_ig_channels(conn):
-    return conn.execute("""SELECT id, platform, account_name, remote_account_id, linked_page_id, access_token,
-               instagram_auth_method
+def _selected_zernio_channel_id(conn, chat_id, sender_id):
+    preference = conn.execute(
+        """SELECT selected_zernio_channel_id FROM telegram_account_preferences
+            WHERE telegram_chat_id=? AND telegram_user_id=?""",
+        (str(chat_id), str(sender_id)),
+    ).fetchone()
+    if not preference or not preference["selected_zernio_channel_id"]:
+        return None
+    channel_id = int(preference["selected_zernio_channel_id"])
+    owned = conn.execute(
+        """SELECT 1 FROM channels
+            WHERE id=? AND platform='instagram' AND is_active=1
+              AND zernio_account_id IS NOT NULL AND TRIM(zernio_account_id)<>''
+              AND zernio_telegram_chat_id=? AND zernio_telegram_user_id=?""",
+        (channel_id, str(chat_id), str(sender_id)),
+    ).fetchone()
+    return channel_id if owned else -1
+
+def _telegram_can_access_zernio_channel(conn, channel_id, chat_id, sender_id):
+    """Authorize a Zernio account against its owning Telegram identity and selection."""
+    row = conn.execute(
+        """SELECT id FROM channels
+            WHERE id=? AND platform='instagram' AND is_active=1
+              AND zernio_account_id IS NOT NULL AND TRIM(zernio_account_id)<>''
+              AND zernio_telegram_chat_id=? AND zernio_telegram_user_id=?""",
+        (int(channel_id), str(chat_id), str(sender_id)),
+    ).fetchone()
+    if row is None:
+        return False
+    selected_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
+    return selected_id in (None, int(row["id"]))
+
+
+def _telegram_can_access_publication(conn, publication_id, chat_id, sender_id):
+    row = conn.execute(
+        """SELECT c.id, c.zernio_account_id, c.zernio_telegram_chat_id,
+                  c.zernio_telegram_user_id
+             FROM publications p JOIN channels c ON c.id=p.channel_id
+            WHERE p.id=?""",
+        (int(publication_id),),
+    ).fetchone()
+    if row is None:
+        return False
+    if not row["zernio_account_id"]:
+        return True
+    if (str(row["zernio_telegram_chat_id"] or "") != str(chat_id)
+            or str(row["zernio_telegram_user_id"] or "") != str(sender_id)):
+        return False
+    selected_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
+    return selected_id is None or selected_id == int(row["id"])
+
+
+def _telegram_can_access_comment_rule(conn, rule_id, chat_id, sender_id):
+    row = conn.execute(
+        """SELECT c.id, c.zernio_account_id, c.zernio_telegram_chat_id,
+                  c.zernio_telegram_user_id
+             FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id
+            WHERE r.id=? AND c.platform='instagram' AND c.is_active=1""",
+        (int(rule_id),),
+    ).fetchone()
+    if row is None:
+        return False
+    if not row["zernio_account_id"]:
+        return True
+    if (str(row["zernio_telegram_chat_id"] or "") != str(chat_id)
+            or str(row["zernio_telegram_user_id"] or "") != str(sender_id)):
+        return False
+    selected_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
+    return selected_id is None or selected_id == int(row["id"])
+
+
+def _connected_ig_channels(conn, chat_id=None, sender_id=None):
+    rows = conn.execute("""SELECT id, platform, account_name, remote_account_id, linked_page_id, access_token,
+               instagram_auth_method, zernio_account_id, zernio_profile_id
         FROM channels WHERE platform='instagram' AND is_active=1
-        AND remote_account_id IS NOT NULL AND TRIM(remote_account_id)<>''
-        AND access_token IS NOT NULL AND TRIM(access_token)<>'' ORDER BY id""").fetchall()
+        AND (
+          (remote_account_id IS NOT NULL AND TRIM(remote_account_id)<>''
+           AND access_token IS NOT NULL AND TRIM(access_token)<>'')
+          OR (zernio_account_id IS NOT NULL AND TRIM(zernio_account_id)<>''
+              AND zernio_telegram_chat_id=? AND zernio_telegram_user_id=?)
+        ) ORDER BY id""", (str(chat_id or ""), str(sender_id or ""))).fetchall()
+    selected_id = _selected_zernio_channel_id(conn, chat_id, sender_id) if chat_id is not None and sender_id is not None else None
+    if selected_id is not None:
+        return [row for row in rows if not row["zernio_account_id"] or int(row["id"]) == selected_id]
+    return rows
 
 
 def _comment_rule_detail(conn, client, token, chat_id, rule_id):
     row = conn.execute("""SELECT r.*, c.account_name FROM instagram_comment_rules r
         JOIN channels c ON c.id=r.channel_id WHERE r.id=? AND c.platform='instagram'
-        AND c.is_active=1 AND c.remote_account_id IS NOT NULL
-        AND c.access_token IS NOT NULL""", (rule_id,)).fetchone()
+        AND c.is_active=1 AND (
+          (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id)<>'')
+          OR (c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL)
+        )""", (rule_id,)).fetchone()
     if row is None:
         _send(client, token, chat_id, "قاعدة التعليقات غير موجودة أو القناة غير متصلة.", _menu())
         return
@@ -272,16 +390,39 @@ def _comment_rule_detail(conn, client, token, chat_id, rule_id):
 
 def _comment_live_list(conn, client, graph_client_for, token, chat_id, rule_id):
     row = conn.execute("""SELECT r.media_id,c.id,c.platform,c.remote_account_id,c.linked_page_id,
-               c.access_token,c.instagram_auth_method
+               c.access_token,c.instagram_auth_method,c.zernio_account_id
         FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id
         WHERE r.id=? AND c.platform='instagram' AND c.is_active=1
-          AND c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL""",
-        (rule_id,)).fetchone()
-    if row is None or graph_client_for is None:
-        _send(client, token, chat_id, "القاعدة غير متاحة أو عميل Meta غير جاهز.", _menu())
+          AND (
+            (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id)<>'')
+            OR (c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL)
+          )""", (rule_id,)).fetchone()
+    if row is None:
+        _send(client, token, chat_id, "القاعدة غير متاحة أو القناة غير متصلة.", _menu())
         return
     graph = None
     try:
+        if row["zernio_account_id"]:
+            from .zernio_client import ZernioClient
+            comments = ZernioClient().list_post_comments(
+                str(row["media_id"]), account_id=row["zernio_account_id"], limit=25
+            )
+            lines = [f"💬 أحدث التعليقات للقاعدة #{rule_id} عبر Zernio:"]
+            for item in comments[:12]:
+                author = item.get("author") or {}
+                username = (
+                    author.get("username") if isinstance(author, dict) else author
+                ) or item.get("username") or item.get("authorName") or "مستخدم"
+                lines.append(f"\n{username}: {str(item.get('text') or '[تعليق بلا نص]')[:500]}")
+            if not comments:
+                lines.append("لا توجد تعليقات ظاهرة.")
+            _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[[
+                {"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{rule_id}"}
+            ]]})
+            return
+
+        if graph_client_for is None:
+            raise RuntimeError("Meta client is not configured for this legacy channel.")
         graph = graph_client_for(row)
         comments, _ = graph.get_media_comments(str(row["media_id"]), row["access_token"], limit=25)
         lines = [f"💬 أحدث التعليقات للقاعدة #{rule_id}:"]
@@ -290,19 +431,26 @@ def _comment_live_list(conn, client, graph_client_for, token, chat_id, rule_id):
             lines.append(f"\n{author}: {str(item.get('text') or '[تعليق بلا نص]')[:500]}")
         if not comments:
             lines.append("لا توجد تعليقات ظاهرة.")
-        _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[[{"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{rule_id}"}]]})
+        _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[[
+            {"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{rule_id}"}
+        ]]})
     except Exception as exc:
         from .redact import redact
-        hint = _comment_permission_hint(row, graph) if graph is not None else "تعذر تهيئة عميل Meta."
-        _send(client, token, chat_id, f"تعذر جلب التعليقات من Meta: {redact(str(exc))[:400]}\n{hint}", _menu())
+        hint = (
+            "تعذر الاتصال بخدمة Zernio؛ تحقق من ZERNIO_API_KEY وصلاحية التعليقات."
+            if row["zernio_account_id"] else
+            _comment_permission_hint(row, graph) if graph is not None else "تعذر تهيئة عميل Meta."
+        )
+        _send(client, token, chat_id, f"تعذر جلب التعليقات: {redact(str(exc))[:400]}\n{hint}", _menu())
 
-def _dm_list(conn, client, graph_client_for, token, chat_id):
-    channels = _connected_ig_channels(conn)
+
+def _dm_list(conn, client, graph_client_for, token, chat_id, sender_id):
+    channels = _connected_ig_channels(conn, chat_id, sender_id)
     if not channels:
         _send(client, token, chat_id, "لا توجد قناة Instagram متصلة ونشطة.", _menu())
         return
-    if graph_client_for is None:
-        _send(client, token, chat_id, "خدمة Meta غير متاحة حالياً.", _menu())
+    if graph_client_for is None and not any(ch["zernio_account_id"] for ch in channels):
+        _send(client, token, chat_id, "خدمة الرسائل غير متاحة حالياً.", _menu())
         return
     lines = ["✉️ محادثات Instagram الخاصة:"]
     keyboard = []
@@ -311,6 +459,31 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
     for channel in channels:
         graph = None
         try:
+            if channel["zernio_account_id"]:
+                from .zernio_client import ZernioClient
+                rows = ZernioClient().list_inbox_conversations(
+                    account_id=channel["zernio_account_id"], limit=50
+                )
+                lines.append(f"\n{channel['account_name']}: {len(rows)} محادثة عبر Zernio")
+                for conv in rows[:8]:
+                    cid = str(conv.get("id") or "")
+                    if not cid or len(cid) > 512:
+                        continue
+                    username = str(conv.get("participantName") or conv.get("participantId") or "مستخدم")
+                    with conn:
+                        ref = conn.execute(
+                            """INSERT INTO telegram_dm_conversation_refs
+                               (chat_id,channel_id,conversation_id,created_at) VALUES(?,?,?,?)""",
+                            (chat_id, int(channel["id"]), cid, datetime.now(timezone.utc).isoformat()),
+                        )
+                        ref_id = int(ref.lastrowid)
+                    lines.append(f"• {username} · {conv.get('updatedTime') or ''} · غير المقروء: {conv.get('unreadCount') or 0}")
+                    keyboard.append([{"text": f"فتح {username[:18]} / قناة {channel['id']}",
+                                      "callback_data": f"bs:dm:view:{ref_id}"}])
+                continue
+
+            if graph_client_for is None:
+                raise RuntimeError("Meta client is not configured for this legacy channel.")
             graph = graph_client_for(channel)
             messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(channel, graph) else str(channel["linked_page_id"] or "")
             if not messaging_id:
@@ -338,21 +511,73 @@ def _dm_list(conn, client, graph_client_for, token, chat_id):
                                   "callback_data": f"bs:dm:view:{ref_id}"}])
         except Exception as exc:
             from .redact import redact
-            hint = _messaging_permission_hint(channel, graph) if graph is not None else "تعذر تهيئة عميل Meta."
+            hint = (
+                "تعذر الاتصال بخدمة Zernio؛ تحقق من مفتاح ZERNIO_API_KEY وصلاحية الرسائل."
+                if channel["zernio_account_id"] else
+                _messaging_permission_hint(channel, graph) if graph is not None else "تعذر تهيئة عميل Meta."
+            )
             lines.append(f"تعذر جلب الرسائل: {redact(str(exc))[:220]}\n{hint}")
     keyboard.append([{"text": "↩ القائمة", "callback_data": "bs:menu"}])
     _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard": keyboard})
 
 
 def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, conversation_id):
-    channel = conn.execute("""SELECT id,platform,account_name,remote_account_id,linked_page_id,access_token,instagram_auth_method FROM channels
-        WHERE id=? AND platform='instagram' AND is_active=1 AND remote_account_id IS NOT NULL
-        AND access_token IS NOT NULL""", (channel_id,)).fetchone()
-    if channel is None or graph_client_for is None:
-        _send(client, token, chat_id, "القناة غير متصلة أو صلاحية Meta غير متاحة.", _menu())
+    channel = conn.execute("""SELECT id,platform,account_name,remote_account_id,linked_page_id,
+        access_token,instagram_auth_method,zernio_account_id,zernio_profile_id FROM channels
+        WHERE id=? AND platform='instagram' AND is_active=1
+          AND (
+            (zernio_account_id IS NOT NULL AND TRIM(zernio_account_id)<>'')
+            OR (remote_account_id IS NOT NULL AND access_token IS NOT NULL)
+          )""", (channel_id,)).fetchone()
+    if channel is None:
+        _send(client, token, chat_id, "القناة غير متصلة.", _menu())
+        return
+    if channel["zernio_account_id"] and not _telegram_can_access_zernio_channel(
+        conn, channel_id, chat_id, chat_id
+    ):
+        _send(client, token, chat_id, "لا تملك صلاحية فتح هذه المحادثة أو أن حساباً آخر محدد.", _menu())
         return
     graph = None
     try:
+        if channel["zernio_account_id"]:
+            from .zernio_client import ZernioClient
+            zernio = ZernioClient()
+            conversations = zernio.list_inbox_conversations(
+                account_id=channel["zernio_account_id"], limit=100
+            )
+            conversation = next(
+                (item for item in conversations if str(item.get("id") or "") == str(conversation_id)),
+                {},
+            )
+            messages = zernio.list_inbox_messages(
+                conversation_id, account_id=channel["zernio_account_id"], limit=50, sort_order="desc"
+            )
+            recipient = str(conversation.get("participantId") or "")
+            if not recipient:
+                incoming = next((m for m in messages if m.get("direction") == "incoming"), {})
+                recipient = str(incoming.get("senderId") or "unknown")
+            peer_name = str(conversation.get("participantName") or recipient or "العميل")
+            lines = [f"✉️ {peer_name} · {channel['account_name']} · Zernio"]
+            for msg in reversed(messages[:10]):
+                who = "حسابك" if msg.get("direction") == "outgoing" else str(msg.get("senderName") or peer_name)
+                lines.append(f"\n{who}: {str(msg.get('message') or '[مرفق أو رسالة بلا نص]')[:650]}")
+            window_open, window_error = _zernio_dm_window(messages, datetime.now(timezone.utc))
+            lines.append("\nنافذة الرد اليدوي: " + ("مفتوحة" if window_open else "مغلقة/غير مؤكدة"))
+            with conn:
+                conn.execute("""INSERT INTO telegram_dm_reply_sessions
+                    (chat_id,channel_id,conversation_id,recipient_id,created_at) VALUES(?,?,?,?,?)
+                    ON CONFLICT(chat_id) DO UPDATE SET channel_id=excluded.channel_id,
+                    conversation_id=excluded.conversation_id,recipient_id=excluded.recipient_id,
+                    created_at=excluded.created_at""",
+                    (chat_id, channel_id, conversation_id, recipient, datetime.now(timezone.utc).isoformat()))
+            _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard": [
+                [{"text": "✍️ كتابة رد يدوي", "callback_data": "bs:dm:compose"}],
+                [{"text": "↩ صندوق الرسائل", "callback_data": "bs:dms"}],
+            ]})
+            return
+
+        if graph_client_for is None:
+            raise RuntimeError("Meta client is not configured for this legacy channel.")
         graph = graph_client_for(channel)
         messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(channel, graph) else str(channel["linked_page_id"] or "")
         if not messaging_id:
@@ -384,8 +609,13 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
         ]})
     except Exception as exc:
         from .redact import redact
-        hint = _messaging_permission_hint(channel, graph) if graph is not None else "تعذر تهيئة عميل Meta."
-        _send(client, token, chat_id, f"تعذر فتح المحادثة: {redact(str(exc))[:350]}\n{hint} قد تحتاج أيضاً مراجعة التطبيق لدى Meta.", _menu())
+        hint = (
+            "تعذر الاتصال بخدمة Zernio؛ تحقق من مفتاح ZERNIO_API_KEY وصلاحية الرسائل."
+            if channel["zernio_account_id"] else
+            _messaging_permission_hint(channel, graph) if graph is not None else "تعذر تهيئة عميل Meta."
+        )
+        _send(client, token, chat_id, f"تعذر فتح المحادثة: {redact(str(exc))[:350]}\n{hint}", _menu())
+
 
 
 def process_control_update(conn, config, client, update: dict, graph_client_for=None) -> bool:
@@ -417,6 +647,23 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             return True
         if query_id:
             client.answer_callback_query(token, query_id)
+        if data.startswith("bs:schedule:"):
+            schedule_parts = data.split(":")
+            if (len(schedule_parts) == 4 and schedule_parts[2] in {"reschedule", "cancel"}
+                    and schedule_parts[3].isdigit()
+                    and not _telegram_can_access_publication(
+                        conn, int(schedule_parts[3]), chat_id, sender_id
+                    )):
+                _send(client, token, chat_id, "لا تملك صلاحية إدارة هذا المنشور أو أن الحساب المختار مختلف.", _menu())
+                return True
+        if data.startswith("bs:comment:"):
+            parts = data.split(":")
+            rule_part = parts[3] if len(parts) >= 4 and parts[2] in {"edit", "fetch", "detail", "logs"} else (parts[2] if len(parts) >= 3 else "")
+            if rule_part.isdigit() and not _telegram_can_access_comment_rule(
+                conn, int(rule_part), chat_id, sender_id
+            ):
+                _send(client, token, chat_id, "لا تملك صلاحية إدارة هذه القاعدة أو أن الحساب المختار مختلف.", _menu())
+                return True
         if data == "bs:menu":
             with conn:
                 conn.execute("DELETE FROM telegram_schedule_sessions WHERE chat_id=?", (chat_id,))
@@ -544,8 +791,43 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 _send(client, token, chat_id, "تعذر بدء ربط Instagram. تحقق من إعداد رابط HTTPS للوحة التحكم.", _menu())
                 return True
             ticket = create_link_ticket(conn, chat_id=chat_id, user_id=sender_id, platform="instagram")
-            url = base + "/api/channels/instagram/telegram?" + urlencode({"ticket": ticket.token})
+            url = base + "/api/channels/instagram/zernio/telegram?" + urlencode({"ticket": ticket.token})
             _send(client, token, chat_id, "افتح الرابط لإضافة حساب Instagram خلال 10 دقائق. سجّل الدخول في صفحة Instagram الرسمية؛ لا ترسل كلمة المرور أو رمز التحقق للبوت.", {"inline_keyboard": [[{"text": "➕ تسجيل دخول Instagram", "url": url}]]})
+            return True
+        if data.startswith("bs:account:select:z:"):
+            raw_id = data.removeprefix("bs:account:select:z:")
+            if not raw_id.isdigit():
+                _send(client, token, chat_id, "رقم الحساب غير صالح.", _menu())
+                return True
+            account = conn.execute(
+                """SELECT id, account_name, zernio_account_id FROM channels
+                    WHERE id=? AND platform='instagram' AND is_active=1
+                      AND zernio_account_id IS NOT NULL AND TRIM(zernio_account_id)<>''
+                      AND zernio_telegram_chat_id=? AND zernio_telegram_user_id=?""",
+                (int(raw_id), chat_id, sender_id),
+            ).fetchone()
+            if account is None:
+                _send(client, token, chat_id, "الحساب غير موجود أو غير متصل لهذا المستخدم. حدّث قائمة الحسابات.", _menu())
+                return True
+            conn.execute(
+                """INSERT INTO telegram_account_preferences
+                   (telegram_chat_id, telegram_user_id, selected_instagram_account_id,
+                    selected_zernio_channel_id, updated_at)
+                   VALUES (?, ?, NULL, ?, ?)
+                   ON CONFLICT(telegram_chat_id, telegram_user_id) DO UPDATE SET
+                     selected_instagram_account_id=NULL,
+                     selected_zernio_channel_id=excluded.selected_zernio_channel_id,
+                     updated_at=excluded.updated_at""",
+                (chat_id, sender_id, int(account["id"]), datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+            _send(client, token, chat_id,
+                  f"✅ تم اختيار حساب Instagram @{account['account_name']} للإدارة عبر Zernio.\n"
+                  f"معرّف الحساب: {account['zernio_account_id']}",
+                  {"inline_keyboard": [
+                      [{"text": "👤 الحسابات المرتبطة", "callback_data": "bs:accounts"}],
+                      [{"text": "↩ القائمة", "callback_data": "bs:menu"}],
+                  ]})
             return True
         if data.startswith("bs:account:select:"):
             raw_id = data.removeprefix("bs:account:select:")
@@ -563,10 +845,12 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 return True
             conn.execute(
                 """INSERT INTO telegram_account_preferences
-                   (telegram_chat_id, telegram_user_id, selected_instagram_account_id, updated_at)
-                   VALUES (?, ?, ?, ?)
+                   (telegram_chat_id, telegram_user_id, selected_instagram_account_id,
+                    selected_zernio_channel_id, updated_at)
+                   VALUES (?, ?, ?, NULL, ?)
                    ON CONFLICT(telegram_chat_id, telegram_user_id) DO UPDATE SET
                      selected_instagram_account_id=excluded.selected_instagram_account_id,
+                     selected_zernio_channel_id=NULL,
                      updated_at=excluded.updated_at""",
                 (chat_id, sender_id, int(account["id"]), datetime.now(timezone.utc).isoformat()),
             )
@@ -588,36 +872,58 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                     ORDER BY created_at DESC, id DESC""",
                 (chat_id, sender_id),
             ).fetchall()
+            zernio_rows = conn.execute(
+                """SELECT id, account_name AS username, zernio_account_id
+                     FROM channels
+                    WHERE platform='instagram' AND is_active=1
+                      AND zernio_account_id IS NOT NULL AND TRIM(zernio_account_id)<>''
+                      AND zernio_telegram_chat_id=? AND zernio_telegram_user_id=?
+                    ORDER BY created_at DESC, id DESC""",
+                (chat_id, sender_id),
+            ).fetchall()
             selected = conn.execute(
-                """SELECT selected_instagram_account_id FROM telegram_account_preferences
+                """SELECT selected_instagram_account_id, selected_zernio_channel_id
+                     FROM telegram_account_preferences
                     WHERE telegram_chat_id=? AND telegram_user_id=?""",
                 (chat_id, sender_id),
             ).fetchone()
             selected_id = int(selected["selected_instagram_account_id"]) if selected and selected["selected_instagram_account_id"] else None
+            selected_zernio_id = int(selected["selected_zernio_channel_id"]) if selected and selected["selected_zernio_channel_id"] else None
             lines = ["👤 حسابات Instagram المرتبطة"]
             keyboard = []
-            if not rows:
+            if not rows and not zernio_rows:
                 lines.append("\nلا توجد حسابات مرتبطة حتى الآن.")
-            else:
-                for row in rows:
-                    state = {
-                        "connected": "✅ متصل",
-                        "expired": "⌛ انتهت صلاحية الاتصال",
-                        "revoked": "⛔ تم إلغاء الصلاحية",
-                        "error": "⚠️ يحتاج إلى إعادة ربط",
-                    }.get(row["status"], "⚠️ حالة غير معروفة")
-                    selected_label = " ⭐ الحساب المختار" if int(row["id"]) == selected_id else ""
-                    lines.append(
-                        f"\n@{row['username']}{selected_label}\n"
-                        f"المعرّف: {row['instagram_user_id']}\n"
-                        f"الحالة: {state}"
-                    )
-                    if row["status"] == "connected":
-                        keyboard.append([{
-                            "text": ("✓ " if int(row["id"]) == selected_id else "اختيار ")
-                                    + "@" + str(row["username"])[:24],
-                            "callback_data": f"bs:account:select:{row['id']}",
-                        }])
+            for row in rows:
+                state = {
+                    "connected": "✅ متصل",
+                    "expired": "⌛ انتهت صلاحية الاتصال",
+                    "revoked": "⛔ تم إلغاء الصلاحية",
+                    "error": "⚠️ يحتاج إلى إعادة ربط",
+                }.get(row["status"], "⚠️ حالة غير معروفة")
+                is_selected = int(row["id"]) == selected_id
+                selected_label = " ⭐ الحساب المختار" if is_selected else ""
+                lines.append(
+                    f"\n@{row['username']}{selected_label}\n"
+                    f"المعرّف: {row['instagram_user_id']}\n"
+                    f"الحالة: {state}"
+                )
+                if row["status"] == "connected":
+                    keyboard.append([{
+                        "text": ("✓ " if is_selected else "اختيار ") + "@" + str(row["username"])[:24],
+                        "callback_data": f"bs:account:select:{row['id']}",
+                    }])
+            for row in zernio_rows:
+                is_selected = int(row["id"]) == selected_zernio_id
+                selected_label = " ⭐ الحساب المختار" if is_selected else ""
+                lines.append(
+                    f"\n@{row['username']}{selected_label}\n"
+                    f"المعرّف: {row['zernio_account_id']}\n"
+                    "الحالة: ✅ متصل عبر Zernio"
+                )
+                keyboard.append([{
+                    "text": ("✓ " if is_selected else "اختيار ") + "@" + str(row["username"])[:24],
+                    "callback_data": f"bs:account:select:z:{row['id']}",
+                }])
             keyboard.extend([
                 [{"text": "➕ إضافة حساب Instagram", "callback_data": "bs:account:add"}],
                 [{"text": "🔄 تحديث", "callback_data": "bs:accounts"}],
@@ -629,9 +935,15 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
         if data == "bs:status":
             heartbeat = conn.execute("SELECT last_seen_at FROM worker_heartbeat WHERE id=1").fetchone()
             channels = conn.execute(
-                "SELECT COUNT(*) FROM channels WHERE platform='instagram' AND is_active=1 "
-                "AND remote_account_id IS NOT NULL AND TRIM(remote_account_id)<>'' "
-                "AND access_token IS NOT NULL AND TRIM(access_token)<>''"
+                """SELECT COUNT(*) FROM channels
+                    WHERE platform='instagram' AND is_active=1
+                      AND (
+                        (remote_account_id IS NOT NULL AND TRIM(remote_account_id)<>''
+                         AND access_token IS NOT NULL AND TRIM(access_token)<>'')
+                        OR (zernio_account_id IS NOT NULL AND TRIM(zernio_account_id)<>''
+                            AND zernio_telegram_chat_id=? AND zernio_telegram_user_id=?)
+                      )""",
+                (chat_id, sender_id),
             ).fetchone()[0]
             queued = conn.execute("SELECT COUNT(*) FROM publications WHERE status='scheduled'").fetchone()[0]
             failed = conn.execute("SELECT COUNT(*) FROM publications WHERE status='failed'").fetchone()[0]
@@ -652,7 +964,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             else:
                 lines = ["🗓 آخر المنشورات:"]
                 for row in rows:
-                    caption = (row["caption"] or "بدون وصف").replace("\\n", " ")[:70]
+                    caption = (row["caption"] or "بدون وصف").replace("\n", " ")[:70]
                     lines.append(f"#{row['id']} · {row['status']} · {row['scheduled_at']}\n{caption}")
                 body = "\n".join(lines)
             _send(client, token, chat_id, body, _menu())
@@ -666,14 +978,14 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                        (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
                     (int(update_id), chat_id),
                 )
-            _schedule_list(conn, client, token, chat_id)
+            _schedule_list(conn, client, token, chat_id, sender_id)
             return True
         if data.startswith("bs:schedule:page:"):
             raw_page = data.removeprefix("bs:schedule:page:")
             if not raw_page.isdigit() or len(raw_page) > 5:
                 _send(client, token, chat_id, "رقم صفحة غير صالح.", _menu())
                 return True
-            _schedule_list(conn, client, token, chat_id, int(raw_page))
+            _schedule_list(conn, client, token, chat_id, sender_id, int(raw_page))
             return True
         if data.startswith("bs:schedule:view:"):
             parts = data.removeprefix("bs:schedule:view:").split(":")
@@ -684,7 +996,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 _send(client, token, chat_id, "رقم صفحة غير صالح.", _menu())
                 return True
             page = int(parts[1]) if len(parts) == 2 else 0
-            _schedule_detail(conn, client, token, chat_id, int(parts[0]), page)
+            _schedule_detail(conn, client, token, chat_id, sender_id, int(parts[0]), page)
             return True
         if data.startswith("bs:schedule:reschedule:"):
             raw_id = data.removeprefix("bs:schedule:reschedule:")
@@ -768,6 +1080,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 _send(client, token, chat_id, "لم يتم الإلغاء: الموعد لم يعد مجدولاً أو ينتظر الموافقة.", _menu())
             return True
         if data == "bs:publish":
+            selected_zernio_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
             rows = conn.execute(
                 """SELECT pub.id, p.caption, pub.scheduled_at
                      FROM publications pub
@@ -775,9 +1088,15 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                      JOIN channels c ON c.id = pub.channel_id
                     WHERE pub.status = 'scheduled' AND pub.is_held = 0
                       AND c.platform = 'instagram' AND c.is_active = 1
-                      AND c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id) <> ''
-                      AND c.access_token IS NOT NULL AND TRIM(c.access_token) <> ''
-                    ORDER BY pub.scheduled_at ASC, pub.id ASC LIMIT 8"""
+                      AND (
+                        (c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id) <> ''
+                         AND c.access_token IS NOT NULL AND TRIM(c.access_token) <> '')
+                        OR (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id) <> ''
+                            AND c.zernio_telegram_chat_id=? AND c.zernio_telegram_user_id=?
+                            AND (? IS NULL OR c.id=?))
+                      )
+                    ORDER BY pub.scheduled_at ASC, pub.id ASC LIMIT 8""",
+                (chat_id, sender_id, selected_zernio_id, selected_zernio_id),
             ).fetchall()
             if not rows:
                 _send(client, token, chat_id,
@@ -790,9 +1109,9 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             ] + [[{"text": "↩ القائمة", "callback_data": "bs:menu"}]]}
             lines = ["🚀 اختر منشوراً مجدولاً لتقديم موعده إلى الآن:"]
             for row in rows:
-                caption = (row["caption"] or "بدون وصف").replace("\\n", " ")[:60]
-                lines.append(f"#{row['id']} · {row['scheduled_at']}\\n{caption}")
-            _send(client, token, chat_id, "\\n".join(lines), keyboard)
+                caption = (row["caption"] or "بدون وصف").replace("\n", " ")[:60]
+                lines.append(f"#{row['id']} · {row['scheduled_at']}\n{caption}")
+            _send(client, token, chat_id, "\n".join(lines), keyboard)
             return True
         if data.startswith("bs:publish:"):
             raw_id = data.removeprefix("bs:publish:")
@@ -801,6 +1120,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 return True
             publication_id = int(raw_id)
             now = datetime.now(timezone.utc).isoformat()
+            selected_zernio_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
             with conn:
                 updated = conn.execute(
                     """UPDATE publications
@@ -810,12 +1130,15 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                               SELECT 1 FROM channels c
                                WHERE c.id = publications.channel_id
                                  AND c.platform = 'instagram' AND c.is_active = 1
-                                 AND c.remote_account_id IS NOT NULL
-                                 AND TRIM(c.remote_account_id) <> ''
-                                 AND c.access_token IS NOT NULL
-                                 AND TRIM(c.access_token) <> ''
+                                 AND (
+                                   (c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id) <> ''
+                                    AND c.access_token IS NOT NULL AND TRIM(c.access_token) <> '')
+                                   OR (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id) <> ''
+                                       AND c.zernio_telegram_chat_id=? AND c.zernio_telegram_user_id=?
+                                       AND (? IS NULL OR c.id=?))
+                                 )
                           )""",
-                    (now, now, publication_id),
+                    (now, now, publication_id, chat_id, sender_id, selected_zernio_id, selected_zernio_id),
                 )
                 if updated.rowcount == 1 and update_id is not None:
                     conn.execute(
@@ -838,13 +1161,21 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                   _menu())
             return True
         if data == "bs:comments":
+            selected_zernio_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
             rows = conn.execute(
                 """SELECT r.id, r.media_id, r.enabled, c.account_name
                      FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id
                     WHERE c.platform='instagram' AND c.is_active=1
-                      AND c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id)<>''
-                      AND c.access_token IS NOT NULL AND TRIM(c.access_token)<>''
-                    ORDER BY r.id DESC LIMIT 8"""
+                      AND (
+                        (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id)<>''
+                         AND c.zernio_telegram_chat_id=? AND c.zernio_telegram_user_id=?
+                         AND (? IS NULL OR c.id=?))
+                        OR (c.zernio_account_id IS NULL
+                            AND c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id)<>''
+                            AND c.access_token IS NOT NULL AND TRIM(c.access_token)<>'')
+                      )
+                    ORDER BY r.id DESC LIMIT 8""",
+                (chat_id, sender_id, selected_zernio_id, selected_zernio_id),
             ).fetchall()
             if not rows:
                 _send(client, token, chat_id, "لا توجد قواعد تعليقات مرتبطة بقنوات Instagram نشطة.", _menu())
@@ -855,7 +1186,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             _send(client, token, chat_id, "💬 إدارة التعليقات\nاختر قاعدة لعرض الردود والتحكم بها:", {"inline_keyboard": keyboard})
             return True
         if data == "bs:dms":
-            _dm_list(conn, client, graph_client_for, token, chat_id)
+            _dm_list(conn, client, graph_client_for, token, chat_id, sender_id)
             return True
         if data.startswith("bs:dm:view:"):
             parts = data.split(":")
@@ -940,38 +1271,83 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 _send(client, token, chat_id, "انتهت صلاحية المعاينة أو سبق تأكيدها/إلغاؤها؛ افتح المحادثة وأنشئ معاينة جديدة.", _menu())
                 return True
             try:
-                channel = conn.execute("""SELECT id,platform,remote_account_id,linked_page_id,access_token,instagram_auth_method FROM channels
+                provider_label = "Meta"
+                channel = conn.execute("""SELECT id,platform,remote_account_id,linked_page_id,access_token,
+                    instagram_auth_method,zernio_account_id,zernio_profile_id FROM channels
                     WHERE id=? AND platform='instagram' AND is_active=1""", (row["channel_id"],)).fetchone()
-                if channel is None or graph_client_for is None:
-                    raise RuntimeError("قناة Instagram غير متصلة أو عميل Meta غير متاح.")
-                graph = graph_client_for(channel)
-                messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(channel, graph) else str(channel["linked_page_id"] or "")
-                if not messaging_id:
-                    raise RuntimeError("يلزم ربط صفحة Facebook لإرسال الرسائل عبر Facebook Login.")
-                # Re-fetch at confirmation time: the inbox preview may have been opened
-                # while the 24-hour window was valid and confirmed after it closed.
-                _, latest_messages = graph.get_instagram_conversation_messages(
-                    row["conversation_id"], channel["access_token"])
-                window_open, window_error = _instagram_dm_window(
-                    latest_messages, row["recipient_id"], now_dt)
-                if not window_open:
-                    with conn:
-                        conn.execute(
-                            "UPDATE telegram_dm_outbox SET status='cancelled',last_error=?,updated_at=? WHERE id=?",
-                            (window_error, datetime.now(timezone.utc).isoformat(), outbox_id),
-                        )
-                    from .operation_log import mark_operation_notified, record_manual_dm_outcome
-                    event = record_manual_dm_outcome(
-                        conn, outbox_id, status="info", detail=window_error)
-                    _send(client, token, chat_id, f"⛔ {window_error}", _menu())
-                    if event:
-                        mark_operation_notified(conn, int(event["id"]))
-                    return True
-                result = graph.send_instagram_direct_message(
-                    messaging_id, row["recipient_id"], row["message_text"], channel["access_token"])
-                meta_message_id = str(result.get("message_id") or result.get("id") or "")
-                if not meta_message_id:
-                    raise RuntimeError("Meta returned no message ID; delivery cannot be confirmed safely.")
+                if channel is None:
+                    raise RuntimeError("قناة Instagram غير متصلة.")
+                if channel["zernio_account_id"] and not _telegram_can_access_zernio_channel(
+                    conn, channel["id"], chat_id, chat_id
+                ):
+                    raise RuntimeError("لا تملك صلاحية إرسال رد من هذا الحساب أو أن حساباً آخر محدد.")
+                if channel["zernio_account_id"]:
+                    from .zernio_client import ZernioClient
+                    provider_label = "Zernio"
+                    zernio = ZernioClient()
+                    latest_messages = zernio.list_inbox_messages(
+                        row["conversation_id"], account_id=channel["zernio_account_id"],
+                        limit=100, sort_order="desc",
+                    )
+                    window_open, window_error = _zernio_dm_window(latest_messages, now_dt)
+                    if not window_open:
+                        with conn:
+                            conn.execute(
+                                "UPDATE telegram_dm_outbox SET status='cancelled',last_error=?,updated_at=? WHERE id=?",
+                                (window_error, datetime.now(timezone.utc).isoformat(), outbox_id),
+                            )
+                        from .operation_log import mark_operation_notified, record_manual_dm_outcome
+                        event = record_manual_dm_outcome(
+                            conn, outbox_id, status="info", detail=window_error)
+                        _send(client, token, chat_id, f"⛔ {window_error}", _menu())
+                        if event:
+                            mark_operation_notified(conn, int(event["id"]))
+                        return True
+                    result = zernio.send_inbox_message(
+                        row["conversation_id"],
+                        account_id=channel["zernio_account_id"],
+                        message=row["message_text"],
+                        idempotency_key=f"black-spider-human-dm-{outbox_id}",
+                    )
+                    sent_data = result.get("data") or {}
+                    sent_message = result.get("message") or sent_data.get("message") or {}
+                    meta_message_id = str(
+                        sent_message.get("id") or sent_message.get("messageId")
+                        or sent_data.get("messageId") or result.get("messageId") or ""
+                    ) if isinstance(sent_message, dict) else str(sent_data.get("messageId") or result.get("messageId") or "")
+                    if not meta_message_id:
+                        raise RuntimeError("Zernio accepted the request but returned no message ID; delivery cannot be confirmed safely.")
+                else:
+                    if graph_client_for is None:
+                        raise RuntimeError("عميل Meta غير متاح لهذه القناة.")
+                    graph = graph_client_for(channel)
+                    messaging_id = str(channel["remote_account_id"]) if _uses_instagram_login(channel, graph) else str(channel["linked_page_id"] or "")
+                    if not messaging_id:
+                        raise RuntimeError("يلزم ربط صفحة Facebook لإرسال الرسائل عبر Facebook Login.")
+                    # Re-fetch at confirmation time: the inbox preview may have been opened
+                    # while the 24-hour window was valid and confirmed after it closed.
+                    _, latest_messages = graph.get_instagram_conversation_messages(
+                        row["conversation_id"], channel["access_token"])
+                    window_open, window_error = _instagram_dm_window(
+                        latest_messages, row["recipient_id"], now_dt)
+                    if not window_open:
+                        with conn:
+                            conn.execute(
+                                "UPDATE telegram_dm_outbox SET status='cancelled',last_error=?,updated_at=? WHERE id=?",
+                                (window_error, datetime.now(timezone.utc).isoformat(), outbox_id),
+                            )
+                        from .operation_log import mark_operation_notified, record_manual_dm_outcome
+                        event = record_manual_dm_outcome(
+                            conn, outbox_id, status="info", detail=window_error)
+                        _send(client, token, chat_id, f"⛔ {window_error}", _menu())
+                        if event:
+                            mark_operation_notified(conn, int(event["id"]))
+                        return True
+                    result = graph.send_instagram_direct_message(
+                        messaging_id, row["recipient_id"], row["message_text"], channel["access_token"])
+                    meta_message_id = str(result.get("message_id") or result.get("id") or "")
+                    if not meta_message_id:
+                        raise RuntimeError("Meta returned no message ID; delivery cannot be confirmed safely.")
             except Exception as exc:
                 from .redact import redact
                 safe_error = redact(str(exc))[:500]
@@ -997,9 +1373,9 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             from .operation_log import mark_operation_notified, record_manual_dm_outcome
             event = record_manual_dm_outcome(
                 conn, outbox_id, status="success",
-                detail=f"أكدت Meta الإرسال. معرّف الرسالة: {meta_message_id}",
+                detail=f"أكدت {provider_label} الإرسال. معرّف الرسالة: {meta_message_id}",
             )
-            _send(client, token, chat_id, f"✅ أكدت Meta إرسال الرد بنجاح. رقم الرسالة: {meta_message_id}", _menu())
+            _send(client, token, chat_id, f"✅ أكدت {provider_label} إرسال الرد بنجاح. رقم الرسالة: {meta_message_id}", _menu())
             if event:
                 mark_operation_notified(conn, int(event["id"]))
             return True
@@ -1025,7 +1401,10 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 field = "public_reply_text" if parts[4] == "public" else "private_reply_text"
                 valid = conn.execute("""SELECT 1 FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id
                     WHERE r.id=? AND c.platform='instagram' AND c.is_active=1
-                    AND c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL""", (int(parts[3]),)).fetchone()
+                    AND (
+                      (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id)<>'')
+                      OR (c.remote_account_id IS NOT NULL AND c.access_token IS NOT NULL)
+                    )""", (int(parts[3]),)).fetchone()
                 if not valid:
                     _send(client, token, chat_id, "القاعدة غير موجودة أو القناة غير متصلة.", _menu())
                 else:
@@ -1041,14 +1420,63 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             if not raw_id.isdigit():
                 _send(client, token, chat_id, "رقم القاعدة غير صالح.", _menu())
             else:
-                rows = conn.execute("""SELECT comment_id,comment_text,status,last_error,created_at
-                    FROM instagram_comment_events WHERE rule_id=? ORDER BY created_at DESC LIMIT 10""",
-                    (int(raw_id),)).fetchall()
-                lines = [f"📜 سجل آخر 10 تعليقات للقاعدة #{raw_id}:"]
-                for row in rows:
-                    lines.append(f"\n{row['created_at']} · {row['status']} · #{row['comment_id']}\n{(row['comment_text'] or '')[:160]}\n{('خطأ: '+row['last_error'][:160]) if row['last_error'] else ''}")
-                _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[
-                    [{"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{raw_id}"}]]})
+                rule_id = int(raw_id)
+                rule = conn.execute("""SELECT r.zernio_automation_id,c.zernio_account_id
+                    FROM instagram_comment_rules r JOIN channels c ON c.id=r.channel_id
+                    WHERE r.id=? AND c.platform='instagram' AND c.is_active=1""",
+                    (rule_id,)).fetchone()
+                if rule and rule["zernio_account_id"]:
+                    lines = [f"📜 سجل أتمتة Zernio للقاعدة #{rule_id}:"]
+                    if not rule["zernio_automation_id"]:
+                        lines.append("لم تتم مزامنة القاعدة مع Zernio بعد. المزامنة تعمل عندما يُسمح للعامل بتنفيذ الأتمتة.")
+                    else:
+                        try:
+                            from .zernio_client import ZernioClient
+                            result = ZernioClient().list_comment_automation_logs(
+                                rule["zernio_automation_id"], limit=8, skip=0
+                            )
+                            labels = {
+                                "sent": "أُرسل الرد الخاص",
+                                "failed": "فشل الرد الخاص",
+                                "skipped": "تم تخطي الرد",
+                                "pending": "بانتظار الإرسال",
+                                "gated": "بانتظار تأكيد المتابع",
+                            }
+                            for item in result["logs"]:
+                                lines.append(
+                                    f"\n{item.get('createdAt') or ''} · {labels.get(item.get('status'), item.get('status') or 'غير معروف')}"
+                                    f"\n{item.get('commenterName') or item.get('commenterUsername') or 'مستخدم'}: "
+                                    f"{str(item.get('commentText') or '')[:140]}"
+                                )
+                                if item.get("error"):
+                                    lines.append(f"السبب: {str(item['error'])[:180]}")
+                                if item.get("commentReplyStatus") in ("failed", "sent"):
+                                    lines.append(f"الرد العام: {item['commentReplyStatus']}")
+                            misses = result.get("misses") or {}
+                            if misses.get("total"):
+                                lines.append(
+                                    f"تعليقات لم تطابق الكلمات: {misses['total']} خلال آخر {misses.get('retentionDays') or '?'} أيام"
+                                )
+                            if not result["logs"]:
+                                lines.append("لا توجد نتائج ردود مسجلة حتى الآن.")
+                        except Exception as exc:
+                            from .redact import redact
+                            lines.append(f"تعذر جلب سجل Zernio: {redact(str(exc))[:250]}")
+                    _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[[
+                        {"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{rule_id}"}
+                    ]]})
+                else:
+                    rows = conn.execute("""SELECT comment_id,comment_text,status,last_error,created_at
+                        FROM instagram_comment_events WHERE rule_id=? ORDER BY created_at DESC LIMIT 10""",
+                        (rule_id,)).fetchall()
+                    lines = [f"📜 سجل آخر 10 تعليقات للقاعدة #{raw_id}:"]
+                    for row in rows:
+                        lines.append(f"\n{row['created_at']} · {row['status']} · #{row['comment_id']}\n"
+                                     f"{(row['comment_text'] or '')[:160]}\n"
+                                     f"{('خطأ: '+row['last_error'][:160]) if row['last_error'] else ''}")
+                    _send(client, token, chat_id, "\n".join(lines)[:3900], {"inline_keyboard":[[
+                        {"text":"↩ تفاصيل القاعدة","callback_data":f"bs:comment:detail:{raw_id}"}
+                    ]]})
             return True
         if data.startswith("bs:comment:"):
             raw_id = data.removeprefix("bs:comment:")
@@ -1057,11 +1485,14 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 return True
             rule_id = int(raw_id)
             row = conn.execute(
-                """SELECT r.enabled FROM instagram_comment_rules r
+                """SELECT r.enabled,c.zernio_account_id FROM instagram_comment_rules r
                      JOIN channels c ON c.id=r.channel_id
                     WHERE r.id=? AND c.platform='instagram' AND c.is_active=1
-                      AND c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id)<>''
-                      AND c.access_token IS NOT NULL AND TRIM(c.access_token)<>''""",
+                      AND (
+                        (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id)<>'')
+                        OR (c.remote_account_id IS NOT NULL AND TRIM(c.remote_account_id)<>''
+                            AND c.access_token IS NOT NULL AND TRIM(c.access_token)<>'')
+                      )""",
                 (rule_id,),
             ).fetchone()
             if row is None:
@@ -1078,14 +1509,18 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                         (int(update_id), chat_id),
                     )
             from .operation_log import record_control_operation
+            if row["zernio_account_id"]:
+                status_message = (
+                    f"تم حفظ حالة القاعدة محلياً ({'تشغيل' if new_value else 'إيقاف'}). "
+                    "لم يتم تأكيد مزامنتها على Zernio بعد؛ سيحاول العامل مزامنتها عندما يعمل مسار الأتمتة."
+                )
+            else:
+                status_message = f"{'تم تشغيل' if new_value else 'تم إيقاف'} أتمتة التعليقات للقاعدة #{rule_id}."
             record_control_operation(
                 conn, int(update_id), "تغيير أتمتة التعليقات",
-                f"{'تم تشغيل' if new_value else 'تم إيقاف'} أتمتة التعليقات للقاعدة #{rule_id}.",
-                rule_id=rule_id, now=datetime.now(timezone.utc),
+                status_message, rule_id=rule_id, now=datetime.now(timezone.utc),
             )
-            _send(client, token, chat_id,
-                  f"{'تم تشغيل' if new_value else 'تم إيقاف'} أتمتة التعليقات للقاعدة #{rule_id}.",
-                  _menu())
+            _send(client, token, chat_id, status_message, _menu())
             return True
         _send(client, token, chat_id, "زر غير معروف. افتح القائمة من جديد.", _menu())
         return True

@@ -435,3 +435,104 @@ def test_a_failing_sync_clears_the_refresh_flag_rather_than_wedging_it(conn, con
     assert row["insights_refresh_requested"] == 0, "the queued flag wedged on failure"
     # An error is recorded, so the dashboard shows a reason rather than a silent "Queued".
     assert row["insights_error"], "a failure left no explanation behind"
+
+
+
+def test_zernio_account_sync_uses_follower_history_without_meta_token(conn, config):
+    from worker.account_metrics import sync_zernio_instagram_account
+
+    channel_id = conn.execute(
+        """INSERT INTO channels
+             (platform, account_name, zernio_account_id, zernio_profile_id, is_active)
+           VALUES ('instagram', 'Zernio account', 'z-account', 'z-profile', 1)"""
+    ).lastrowid
+    channel = conn.execute("SELECT * FROM channels WHERE id=?", (channel_id,)).fetchone()
+    config.ig_account_total_metrics = "views,likes"
+    config.account_backfill_days = 120
+
+    class FakeZernioAccount:
+        last_usage_pct = None
+        retry_after_seconds = 0
+
+        def get_instagram_follower_history(self, **kwargs):
+            assert kwargs["account_id"] == "z-account"
+            assert kwargs["metric_type"] == "time_series"
+            return {"metrics": {
+                "follower_count": {"values": [{"date": "2026-08-05", "value": 1200}]},
+                "followers_gained": {"values": [{"date": "2026-08-05", "value": 12}]},
+                "followers_lost": {"values": [{"date": "2026-08-05", "value": 3}]},
+            }}
+
+        def get_instagram_account_insights(self, **kwargs):
+            if kwargs["metric_type"] == "time_series":
+                return {"metrics": {"reach": {"values": [
+                    {"date": "2026-08-05", "value": 450}
+                ]}}}
+            return {"metrics": {
+                "views": {"total": 900},
+                "likes": {"total": 75},
+            }}
+
+    result = sync_zernio_instagram_account(
+        conn, config, FakeZernioAccount(), channel, NOW, _budget()
+    )
+    row = conn.execute(
+        "SELECT followers_count, follows_gained, reach, views, likes "
+        "FROM account_metrics WHERE channel_id=? AND day='2026-08-05'",
+        (channel_id,),
+    ).fetchone()
+    assert row["followers_count"] == 1200
+    assert row["follows_gained"] == 12
+    assert row["reach"] == 450
+    assert result["days"] >= 2
+
+
+def test_account_metrics_runner_selects_zernio_for_linked_channel_without_meta_token(
+    conn, config, monkeypatch
+):
+    channel_id = conn.execute(
+        """INSERT INTO channels
+             (platform, account_name, zernio_account_id, zernio_profile_id, is_active)
+           VALUES ('instagram', 'Zernio account', 'z-account', 'z-profile', 1)"""
+    ).lastrowid
+    conn.commit()
+    config.ig_account_total_metrics = "views"
+    class FakeZernioAccount:
+        last_usage_pct = None
+        retry_after_seconds = 0
+        demographics_calls = 0
+
+        def get_instagram_follower_history(self, **kwargs):
+            return {"metrics": {
+                "follower_count": {"values": [{"date": "2026-08-06", "value": 1200}]},
+                "followers_gained": {"values": [{"date": "2026-08-06", "value": 4}]},
+                "followers_lost": {"values": []},
+            }}
+
+        def get_instagram_account_insights(self, **kwargs):
+            if kwargs["metric_type"] == "time_series":
+                return {"metrics": {"reach": {"values": []}}}
+            return {"metrics": {"views": {"total": 250}}}
+
+        def get_instagram_demographics(self, **kwargs):
+            self.demographics_calls += 1
+            return {"YE": 7}
+
+    fake = FakeZernioAccount()
+    monkeypatch.setattr("worker.zernio_client.ZernioClient", lambda: fake)
+    assert run_account_metrics(conn, config, now=NOW) == 1
+    row = conn.execute(
+        "SELECT followers_count, follows_gained, views FROM account_metrics "
+        "WHERE channel_id=? AND day='2026-08-06'", (channel_id,),
+    ).fetchone()
+    assert row["followers_count"] == 1200
+    assert row["follows_gained"] == 4
+    assert row["views"] == 250
+    # Zernio supports follower and engaged audience demographics, not Meta's
+    # reached_audience_demographics metric. The unsupported third metric is skipped.
+    assert fake.demographics_calls == 8
+    status = conn.execute(
+        "SELECT insights_error, insights_synced_at FROM channels WHERE id=?", (channel_id,)
+    ).fetchone()
+    assert status["insights_error"] is None
+    assert status["insights_synced_at"] is not None

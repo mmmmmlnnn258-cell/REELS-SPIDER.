@@ -399,3 +399,28 @@ def test_a_feed_post_older_than_24h_is_unaffected_by_the_story_cutoff(conn, conf
     _posted_pub(conn, ch, published_at=(NOW - timedelta(days=3)).isoformat())
 
     assert run_metrics(conn, config, fake_client, NOW) == 1
+
+
+def test_zernio_publication_metrics_do_not_require_meta_access_token(conn, config, monkeypatch):
+    channel_id = conn.execute(
+        """INSERT INTO channels
+             (platform, account_name, zernio_account_id, zernio_profile_id)
+           VALUES ('instagram', 'Zernio', 'z-account', 'z-profile')"""
+    ).lastrowid
+    _, publication_id = _posted_pub(
+        conn, channel_id, published_at=(NOW - timedelta(days=1)).isoformat(),
+        remote_id="ig-media-zernio",
+    )
+    class FakeZernio:
+        def get_post_analytics(self, post_id, *, account_id):
+            assert post_id == "ig-media-zernio"
+            assert account_id == "z-account"
+            return {"reach": 321, "likes": 45, "comments": 6, "saves": 7, "shares": 2, "views": 400}
+    monkeypatch.setattr("worker.zernio_client.ZernioClient", FakeZernio)
+    assert run_metrics(conn, config, client=None, now=NOW) == 1
+    row = _snapshots(conn, publication_id)[0]
+    assert row["reach"] == 321
+    assert row["likes"] == 45
+    assert row["comments"] == 6
+    assert row["saves"] == 7
+    assert row["impressions"] == 400

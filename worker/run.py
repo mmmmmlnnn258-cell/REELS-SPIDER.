@@ -133,6 +133,10 @@ def run_once(conn, config: Config, client, *, client_for=None, now=None, logger=
     def _pub_needs_tunnel(pub) -> bool:
         channel = db.get_channel(conn, pub["channel_id"])
         caps = PLATFORM_CAPS.get(channel["platform"]) if channel else None
+        # Zernio-linked Instagram channels upload their local media to Zernio storage,
+        # so they never need the dashboard's temporary public tunnel.
+        if channel is not None and "zernio_account_id" in channel.keys() and channel["zernio_account_id"]:
+            return False
         # Platforms that upload the file themselves never need a public URL — without this a
         # Discord image post would drag a cloudflared tunnel up for the whole batch.
         if caps is not None and caps.uploads_media_bytes:

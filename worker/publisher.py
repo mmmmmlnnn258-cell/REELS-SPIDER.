@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -281,7 +282,8 @@ def _check_media_limits(assets, platform: str, surface: str) -> None:
 
 
 def _validate(post, assets, dry_run: bool, asset_base_url: str | None, platform: str,
-              caption: str | None = None, config=None, surface: str = "feed") -> None:
+              caption: str | None = None, config=None, surface: str = "feed",
+              zernio_mode: bool = False) -> None:
     if platform not in _PUBLISHERS:
         raise _NonRetryable(
             f"unsupported platform '{platform}' — this worker has no adapter for it"
@@ -329,7 +331,7 @@ def _validate(post, assets, dry_run: bool, asset_base_url: str | None, platform:
             )
         # No caption-limit check: a story sends no caption at all.
         _check_media_limits(assets, platform, surface)
-        _validate_media_available(assets, dry_run, asset_base_url, caps, config, surface)
+        _validate_media_available(assets, dry_run, asset_base_url, caps, config, surface, zernio_mode)
         return
     if post_type == "single" and len(assets) != 1:
         raise _NonRetryable(f"single post needs exactly 1 asset, has {len(assets)}")
@@ -374,15 +376,24 @@ def _validate(post, assets, dry_run: bool, asset_base_url: str | None, platform:
     # about duration, and by then the send has already read "scheduled" to the owner.
     # This covers feed and reel (the story surface returns above before reaching here).
     _check_media_limits(assets, platform, surface)
-    _validate_media_available(assets, dry_run, asset_base_url, caps, config, surface)
+    _validate_media_available(assets, dry_run, asset_base_url, caps, config, surface, zernio_mode)
 
 
 def _validate_media_available(assets, dry_run: bool, asset_base_url: str | None,
-                              caps: PlatformCaps, config, surface: str = "feed") -> None:
+                              caps: PlatformCaps, config, surface: str = "feed",
+                              zernio_mode: bool = False) -> None:
     """Every asset must be reachable the way this platform expects, or fail loudly here
     rather than mid-publish. Shared by the feed and story paths so the two cannot drift.
     """
     if dry_run:
+        return
+    if zernio_mode:
+        missing = [
+            a["id"] for a in assets
+            if _resolve_local_path(a, caps, config, surface) is None
+        ]
+        if missing:
+            raise _NonRetryable(f"asset files missing from local storage for Zernio upload: {missing}")
         return
     if caps.uploads_media_bytes:
         missing = [
@@ -1331,8 +1342,12 @@ def publish_one(
         ).fetchone()[0]
         caption = _select_caption(conn, post["id"], channel["platform"], used_count)
         surface = _surface(pub)
+        zernio_mode = (
+            "zernio_account_id" in channel.keys()
+            and bool(channel["zernio_account_id"])
+        )
         _validate(post, assets, dry_run, asset_base_url, channel["platform"], caption,
-                  config, surface)
+                  config, surface, zernio_mode=zernio_mode)
         plan = _build_plan(channel, post, assets, asset_base_url, caption, config,
                            surface, conn)
     except _NonRetryable as exc:
@@ -1349,6 +1364,65 @@ def publish_one(
             updated_at=_iso(now),
         )
         return PublishOutcome("dry_run", "dry-run: nothing published", plan)
+
+    zernio_mode = (
+        "zernio_account_id" in channel.keys()
+        and bool(channel["zernio_account_id"])
+    )
+    if zernio_mode:
+        try:
+            from .zernio_client import ZernioClient
+
+            zernio = ZernioClient()
+            media_items = []
+            for asset_path in plan["asset_paths"]:
+                if asset_path is None:
+                    raise _NonRetryable("a local media file is required for Zernio publishing")
+                media_items.append(zernio.upload_media(
+                    asset_path,
+                    media_type=plan["media_kind"] or "image",
+                ))
+            content_type = "story" if surface == "story" else None  # A single video defaults to a Reel in Zernio.
+            result = zernio.create_post(
+                content=plan["caption"],
+                account_id=channel["zernio_account_id"],
+                media_items=media_items,
+                content_type=content_type,
+                # Zernio accepts the first comment as part of the publishing request.
+                # Its response confirms the post, but does not expose a separate comment
+                # ID/status, so keep the comment visibly pending rather than claiming it
+                # was independently confirmed.
+                first_comment=plan["first_comment"],
+                idempotency_key=str(uuid.uuid5(uuid.NAMESPACE_URL, f"black-spider-publication-{pub['id']}")),
+            )
+        except _NonRetryable as exc:
+            log(f"Zernio validation failed: {exc}")
+            return _mark_failure(conn, pub, config, now, str(exc), terminal=True)
+        except Exception as exc:  # noqa: BLE001 — Zernio/network failures use normal retry policy
+            log(f"Zernio publish failed or could not be confirmed: {redact(str(exc))}")
+            # Zernio retains post request IDs for a short window. Never blindly
+            # retry an ambiguous write and risk creating a duplicate Instagram post.
+            return _mark_failure(
+                conn, pub, config, now,
+                f"Zernio publish requires manual outcome verification before retry: {redact(str(exc))}",
+                terminal=True,
+            )
+
+        db.update_publication(
+            conn, pub["id"],
+            status="posted", remote_post_id=result["remote_post_id"],
+            published_at=_iso(now), last_error=None, next_retry_at=None,
+            updated_at=_iso(now),
+            # Zernio accepts firstComment with the post, but does not return a
+            # separate comment receipt. "pending" is honest; "posted" would overclaim.
+            first_comment_status="pending" if plan["first_comment"] else "none",
+            first_comment_error=None,
+            first_comment_remote_id=None,
+        )
+        if post["content_kind"] == "one_time":
+            _maybe_retire_one_time(conn, post["id"], now)
+        log(f"published through Zernio -> {result['remote_post_id']}")
+        return PublishOutcome("posted", result["remote_post_id"], plan)
 
     token = channel["access_token"]
     ig = plan["account_id"]

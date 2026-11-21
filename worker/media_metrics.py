@@ -143,6 +143,11 @@ def instagram_metrics_for(media) -> list[str]:
     return [*REQUESTED_METRICS, *extras]
 
 
+def _fetch_zernio(client, media, channel, config):
+    return client.get_post_analytics(
+        media["remote_post_id"], account_id=channel["zernio_account_id"]
+    )
+
 def _fetch_instagram(client, media, channel, config):
     return client.get_media_insights(
         media["remote_post_id"], channel["access_token"], instagram_metrics_for(media)
@@ -216,7 +221,8 @@ assert set(_FETCHERS) == set(SUPPORTED_PLATFORMS), (
 
 def sync_channel_media_metrics(conn, config, client, channel, now, budget,
                                logger=None) -> dict:
-    fetch = _FETCHERS.get(channel["platform"])
+    is_zernio = bool(channel["platform"] == "instagram" and channel["zernio_account_id"])
+    fetch = _fetch_zernio if is_zernio else _FETCHERS.get(channel["platform"])
     if fetch is None:
         return {"fetched": 0, "reused": 0}
 
@@ -284,14 +290,19 @@ def run_media_metrics(conn, config, client=None, now=None, logger=None,
     for channel in rows:
         if _FETCHERS.get(channel["platform"]) is None:
             continue
-        if not channel["access_token"]:
+        is_zernio = channel["platform"] == "instagram" and bool(channel["zernio_account_id"])
+        if not is_zernio and not channel["access_token"]:
             continue
         client_obj = None
         try:
             # Inside the guard: pick_client can raise UnknownPlatform when a channel's
             # platform is missing from the client registries, and doing that above the
             # try killed the whole pass — defeating the per-channel except below.
-            client_obj = pick_client(channel)
+            if is_zernio:
+                from .zernio_client import ZernioClient
+                client_obj = ZernioClient()
+            else:
+                client_obj = pick_client(channel)
             result = sync_channel_media_metrics(
                 conn, config, client_obj, channel, now, budget, logger=logger
             )
