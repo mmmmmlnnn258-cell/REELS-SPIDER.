@@ -51,6 +51,9 @@ export default async function ChannelsPage({
     instagram_connected?: string;
     instagram_username?: string;
     instagram_error?: string;
+    zernio_connected?: string;
+    zernio_account?: string;
+    zernio_error?: string;
   }>;
 }) {
   // The TikTok OAuth callback redirects here with an outcome. Without showing it, a failed
@@ -207,8 +210,12 @@ export default async function ChannelsPage({
                       </span>
                     </Row>
                   ) : null}
-                  <Row label="Access token">
-                    <TokenStatus channel={c} nowMs={nowMs} />
+                  <Row label="Connection">
+                    {c.zernio_account_id ? (
+                      <span className="data text-status-posted">Zernio · @{c.account_name} linked</span>
+                    ) : (
+                      <TokenStatus channel={c} nowMs={nowMs} />
+                    )}
                   </Row>
                 </dl>
                 {c.has_access_token && c.token_error && TOKEN_UPKEEP.has(c.platform) ? (
@@ -234,14 +241,16 @@ export default async function ChannelsPage({
                   />
                 </div>
 
-                <ChannelCredentials
-                  key={`${c.id}-${c.instagram_auth_method}`}
-                  channelId={c.id}
-                  platform={c.platform}
-                  remoteAccountId={c.remote_account_id}
-                  instagramAuthMethod={c.instagram_auth_method}
-                  hasAccessToken={c.has_access_token}
-                />
+                {!c.zernio_account_id ? (
+                  <ChannelCredentials
+                    key={`${c.id}-${c.instagram_auth_method}`}
+                    channelId={c.id}
+                    platform={c.platform}
+                    remoteAccountId={c.remote_account_id}
+                    instagramAuthMethod={c.instagram_auth_method}
+                    hasAccessToken={c.has_access_token}
+                  />
+                ) : null}
 
                 {/* A grouped channel doesn't own its timezone — the group does, and
                     rebasing one member alone would desynchronize the group. The API
@@ -273,9 +282,11 @@ export default async function ChannelsPage({
                       <div className="min-w-0">
                         <p className="text-xs font-medium text-ink-soft">Instagram connection</p>
                         <p className="mt-0.5 text-[11px] text-muted">
-                          {c.has_access_token && c.remote_account_id
-                            ? "This channel is linked. Reconnect only if its access needs refreshing."
-                            : "Connect this existing channel securely with Instagram. Its name, timezone, queue and history will be kept."}
+                          {c.zernio_account_id
+                            ? "Instagram is authorized through Zernio. Posting and inbox actions are not enabled by this connection yet."
+                            : c.has_access_token && c.remote_account_id
+                              ? "This channel is linked. Reconnect only if its access needs refreshing."
+                              : "Connect this existing channel securely. Its name, timezone, queue and history will be kept."}
                         </p>
                         {params.instagram_connected === String(c.id) ? (
                           <p className="mt-1 text-[11px] font-medium text-status-posted">
@@ -283,15 +294,17 @@ export default async function ChannelsPage({
                           </p>
                         ) : null}
                       </div>
-                      <form action="/api/channels/instagram/authorize" method="post">
-                        <input type="hidden" name="channel_id" value={c.id} />
-                        <button
-                          type="submit"
-                          className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink hover:bg-surface"
-                        >
-                          {c.has_access_token && c.remote_account_id ? "Reconnect Instagram" : "ربط Instagram"}
-                        </button>
-                      </form>
+                      {!c.zernio_account_id ? (
+                        <form action="/api/channels/instagram/authorize" method="post">
+                          <input type="hidden" name="channel_id" value={c.id} />
+                          <button
+                            type="submit"
+                            className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink hover:bg-surface"
+                          >
+                            {c.has_access_token && c.remote_account_id ? "Reconnect Instagram" : "ربط Instagram"}
+                          </button>
+                        </form>
+                      ) : null}
                     </div>
                   </div>
                 ) : null}
