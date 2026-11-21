@@ -72,6 +72,9 @@ export interface Channel {
   timezone: string;
   remote_account_id: string | null;
   linked_page_id: string | null;
+  /** Zernio-hosted Instagram connection; no Meta access token is stored in this mode. */
+  zernio_account_id?: string | null;
+  zernio_profile_id?: string | null;
   access_token: string | null;
   refresh_token?: string | null;
   token_expires_at: string | null;
