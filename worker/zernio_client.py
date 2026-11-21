@@ -256,6 +256,70 @@ class ZernioClient:
             return values
         raise ZernioError("Zernio did not return analytics for the connected Instagram account.")
 
+    def get_instagram_follower_history(self, *, account_id: str, metrics: str,
+                                         from_date: str, to_date: str,
+                                         metric_type: str = "time_series") -> dict:
+        """Read daily Instagram follower counts and gained/lost deltas."""
+        if not account_id or not from_date or not to_date:
+            raise ZernioError("An account ID and date range are required.")
+        if metric_type not in ("time_series", "total_value"):
+            raise ZernioError("Invalid Instagram follower-history metric type.")
+        payload = self._request("GET", "/analytics/instagram/follower-history", params={
+            "accountId": account_id, "metrics": metrics,
+            "fromDate": from_date, "toDate": to_date, "metricType": metric_type,
+        })
+        values = payload.get("metrics")
+        if not isinstance(values, dict):
+            raise ZernioError("Zernio returned invalid Instagram follower history.")
+        return payload
+
+    def get_instagram_account_insights(self, *, account_id: str, metrics: str,
+                                       from_date: str, to_date: str,
+                                       metric_type: str = "total_value") -> dict:
+        """Read account-level Instagram reach or aggregate insights."""
+        if not account_id or not from_date or not to_date:
+            raise ZernioError("An account ID and date range are required.")
+        if metric_type not in ("time_series", "total_value"):
+            raise ZernioError("Invalid Instagram account-insights metric type.")
+        payload = self._request("GET", "/analytics/instagram/account-insights", params={
+            "accountId": account_id, "metrics": metrics,
+            "fromDate": from_date, "toDate": to_date, "metricType": metric_type,
+        })
+        values = payload.get("metrics")
+        if not isinstance(values, dict):
+            raise ZernioError("Zernio returned invalid Instagram account insights.")
+        return payload
+
+    def get_instagram_demographics(self, *, account_id: str, metric: str,
+                                   breakdown: str, timeframe: str = "this_month") -> dict:
+        """Read one Instagram audience demographic dimension."""
+        if not account_id or metric not in ("follower_demographics", "engaged_audience_demographics"):
+            raise ZernioError("A valid account and Instagram audience metric are required.")
+        if breakdown not in ("age", "city", "country", "gender"):
+            raise ZernioError("Invalid Instagram demographic breakdown.")
+        if timeframe not in ("this_week", "this_month"):
+            raise ZernioError("Invalid Instagram demographic timeframe.")
+        payload = self._request("GET", "/analytics/instagram/demographics", params={
+            "accountId": account_id, "metric": metric,
+            "breakdown": breakdown, "timeframe": timeframe,
+        })
+        values = payload.get("demographics")
+        if not isinstance(values, dict):
+            raise ZernioError("Zernio returned invalid Instagram demographics.")
+        buckets = values.get(breakdown, {})
+        if isinstance(buckets, list):
+            normalized = {}
+            for item in buckets:
+                if isinstance(item, dict):
+                    name = item.get("dimension") or item.get("label") or item.get("name")
+                    value = item.get("value")
+                    if name is not None and value is not None:
+                        normalized[str(name)] = value
+            return normalized
+        if isinstance(buckets, dict):
+            return buckets
+        return {}
+
     def list_post_comments(self, post_id: str, *, account_id: str,
                            limit: int = 25) -> list[dict]:
         """Read a post's Instagram comment thread from the Zernio inbox API."""
