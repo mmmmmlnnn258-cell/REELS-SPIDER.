@@ -1115,11 +1115,12 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                         message=row["message_text"],
                         idempotency_key=f"black-spider-human-dm-{outbox_id}",
                     )
-                    sent_message = result.get("message") or result.get("data", {}).get("message") or {}
+                    sent_data = result.get("data") or {}
+                    sent_message = result.get("message") or sent_data.get("message") or {}
                     meta_message_id = str(
                         sent_message.get("id") or sent_message.get("messageId")
-                        or result.get("messageId") or ""
-                    ) if isinstance(sent_message, dict) else str(result.get("messageId") or "")
+                        or sent_data.get("messageId") or result.get("messageId") or ""
+                    ) if isinstance(sent_message, dict) else str(sent_data.get("messageId") or result.get("messageId") or "")
                     if not meta_message_id:
                         raise RuntimeError("Zernio accepted the request but returned no message ID; delivery cannot be confirmed safely.")
                 else:
