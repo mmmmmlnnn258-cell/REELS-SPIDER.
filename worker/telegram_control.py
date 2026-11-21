@@ -713,7 +713,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             )
             conn.commit()
             _send(client, token, chat_id,
-                  f"✅ تم اختيار حساب Instagram @{account['account_name']} للإدارة عبر Zernio.\\n"
+                  f"✅ تم اختيار حساب Instagram @{account['account_name']} للإدارة عبر Zernio.\n"
                   f"معرّف الحساب: {account['zernio_account_id']}",
                   {"inline_keyboard": [
                       [{"text": "👤 الحسابات المرتبطة", "callback_data": "bs:accounts"}],
@@ -747,7 +747,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             )
             conn.commit()
             _send(client, token, chat_id,
-                  f"✅ تم اختيار حساب Instagram @{account['username']} للإدارة.\\n"
+                  f"✅ تم اختيار حساب Instagram @{account['username']} للإدارة.\n"
                   f"معرّف الحساب: {account['instagram_user_id']}",
                   {"inline_keyboard": [
                       [{"text": "👤 الحسابات المرتبطة", "callback_data": "bs:accounts"}],
@@ -783,7 +783,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             lines = ["👤 حسابات Instagram المرتبطة"]
             keyboard = []
             if not rows and not zernio_rows:
-                lines.append("\\nلا توجد حسابات مرتبطة حتى الآن.")
+                lines.append("\nلا توجد حسابات مرتبطة حتى الآن.")
             for row in rows:
                 state = {
                     "connected": "✅ متصل",
@@ -794,8 +794,8 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 is_selected = int(row["id"]) == selected_id
                 selected_label = " ⭐ الحساب المختار" if is_selected else ""
                 lines.append(
-                    f"\\n@{row['username']}{selected_label}\\n"
-                    f"المعرّف: {row['instagram_user_id']}\\n"
+                    f"\n@{row['username']}{selected_label}\n"
+                    f"المعرّف: {row['instagram_user_id']}\n"
                     f"الحالة: {state}"
                 )
                 if row["status"] == "connected":
@@ -807,8 +807,8 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 is_selected = int(row["id"]) == selected_zernio_id
                 selected_label = " ⭐ الحساب المختار" if is_selected else ""
                 lines.append(
-                    f"\\n@{row['username']}{selected_label}\\n"
-                    f"المعرّف: {row['zernio_account_id']}\\n"
+                    f"\n@{row['username']}{selected_label}\n"
+                    f"المعرّف: {row['zernio_account_id']}\n"
                     "الحالة: ✅ متصل عبر Zernio"
                 )
                 keyboard.append([{
@@ -820,7 +820,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 [{"text": "🔄 تحديث", "callback_data": "bs:accounts"}],
                 [{"text": "↩ القائمة", "callback_data": "bs:menu"}],
             ])
-            _send(client, token, chat_id, "\\n".join(lines)[:3300], {"inline_keyboard": keyboard})
+            _send(client, token, chat_id, "\n".join(lines)[:3300], {"inline_keyboard": keyboard})
             return True
 
         if data == "bs:status":
