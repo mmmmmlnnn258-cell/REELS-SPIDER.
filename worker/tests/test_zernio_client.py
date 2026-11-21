@@ -256,3 +256,56 @@ def test_get_post_analytics_selects_the_requested_account():
     assert session.calls[0][2]["params"] == {
         "postId": "media-1", "platform": "instagram", "accountId": "account-1"
     }
+
+
+def test_instagram_follower_history_uses_dedicated_daily_endpoint():
+    session = Session([Response(payload={
+        "metrics": {
+            "follower_count": {"total": 120, "values": [{"date": "2026-11-20", "value": 120}]},
+            "followers_gained": {"total": 4, "values": [{"date": "2026-11-20", "value": 4}]},
+        }
+    })])
+    client = ZernioClient("private-key", session=session)
+    result = client.get_instagram_follower_history(
+        account_id="ig-account", metrics="follower_count,followers_gained",
+        from_date="2026-11-01", to_date="2026-11-21",
+    )
+    assert result["metrics"]["follower_count"]["total"] == 120
+    method, url, kwargs = session.calls[0]
+    assert method == "GET" and url.endswith("/analytics/instagram/follower-history")
+    assert kwargs["params"] == {
+        "accountId": "ig-account",
+        "metrics": "follower_count,followers_gained",
+        "fromDate": "2026-11-01", "toDate": "2026-11-21",
+        "metricType": "time_series",
+    }
+
+
+def test_instagram_account_insights_support_daily_reach_and_total_values():
+    session = Session([Response(payload={
+        "metrics": {"reach": {"total": 300, "values": [{"date": "2026-11-20", "value": 300}]}}
+    })])
+    client = ZernioClient("private-key", session=session)
+    result = client.get_instagram_account_insights(
+        account_id="ig-account", metrics="reach", from_date="2026-11-01",
+        to_date="2026-11-21", metric_type="time_series",
+    )
+    assert result["metrics"]["reach"]["values"][0]["value"] == 300
+    assert session.calls[0][1].endswith("/analytics/instagram/account-insights")
+    assert session.calls[0][2]["params"]["metricType"] == "time_series"
+
+
+def test_instagram_demographics_normalizes_dimension_buckets():
+    session = Session([Response(payload={
+        "demographics": {"country": [
+            {"dimension": "YE", "value": 72},
+            {"dimension": "SA", "value": 18},
+        ]}
+    })])
+    client = ZernioClient("private-key", session=session)
+    result = client.get_instagram_demographics(
+        account_id="ig-account", metric="follower_demographics", breakdown="country",
+    )
+    assert result == {"YE": 72, "SA": 18}
+    assert session.calls[0][1].endswith("/analytics/instagram/demographics")
+    assert session.calls[0][2]["params"]["breakdown"] == "country"
