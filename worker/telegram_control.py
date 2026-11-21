@@ -544,7 +544,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 _send(client, token, chat_id, "تعذر بدء ربط Instagram. تحقق من إعداد رابط HTTPS للوحة التحكم.", _menu())
                 return True
             ticket = create_link_ticket(conn, chat_id=chat_id, user_id=sender_id, platform="instagram")
-            url = base + "/api/channels/instagram/telegram?" + urlencode({"ticket": ticket.token})
+            url = base + "/api/channels/instagram/zernio/telegram?" + urlencode({"ticket": ticket.token})
             _send(client, token, chat_id, "افتح الرابط لإضافة حساب Instagram خلال 10 دقائق. سجّل الدخول في صفحة Instagram الرسمية؛ لا ترسل كلمة المرور أو رمز التحقق للبوت.", {"inline_keyboard": [[{"text": "➕ تسجيل دخول Instagram", "url": url}]]})
             return True
         if data.startswith("bs:account:select:"):
