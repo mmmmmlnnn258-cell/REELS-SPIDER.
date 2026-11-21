@@ -698,8 +698,11 @@ def test_zernio_dm_window_fails_closed_when_last_inbound_is_old_or_missing():
 
 def test_telegram_dm_list_reads_zernio_conversations(monkeypatch, conn, config):
     channel_id = conn.execute(
-        """INSERT INTO channels(platform,account_name,zernio_account_id,zernio_profile_id,is_active)
-           VALUES ('instagram','zernio channel','z-account','z-profile',1)"""
+        """INSERT INTO channels
+           (platform,account_name,zernio_account_id,zernio_profile_id,
+            zernio_telegram_chat_id,zernio_telegram_user_id,is_active)
+           VALUES ('instagram','zernio channel','z-account','z-profile',
+                   '7441755677','7441755677',1)"""
     ).lastrowid
     conn.commit()
     class FakeZernio:
@@ -725,8 +728,11 @@ def test_telegram_dm_list_reads_zernio_conversations(monkeypatch, conn, config):
 
 def test_telegram_comment_inbox_reads_zernio_comments(monkeypatch, conn, config):
     channel_id = conn.execute(
-        """INSERT INTO channels(platform,account_name,zernio_account_id,zernio_profile_id,is_active)
-           VALUES ('instagram','zernio channel','z-account','z-profile',1)"""
+        """INSERT INTO channels
+           (platform,account_name,zernio_account_id,zernio_profile_id,
+            zernio_telegram_chat_id,zernio_telegram_user_id,is_active)
+           VALUES ('instagram','zernio channel','z-account','z-profile',
+                   '7441755677','7441755677',1)"""
     ).lastrowid
     rule_id = conn.execute(
         """INSERT INTO instagram_comment_rules(channel_id,media_id,keywords_json,private_reply_text,enabled)
@@ -751,8 +757,11 @@ def test_telegram_comment_inbox_reads_zernio_comments(monkeypatch, conn, config)
 
 def test_zernio_comment_rule_can_be_toggled_from_telegram(conn, config):
     channel_id = conn.execute(
-        """INSERT INTO channels(platform,account_name,zernio_account_id,zernio_profile_id,is_active)
-           VALUES ('instagram','zernio channel','z-account','z-profile',1)"""
+        """INSERT INTO channels
+           (platform,account_name,zernio_account_id,zernio_profile_id,
+            zernio_telegram_chat_id,zernio_telegram_user_id,is_active)
+           VALUES ('instagram','zernio channel','z-account','z-profile',
+                   '7441755677','7441755677',1)"""
     ).lastrowid
     rule_id = conn.execute(
         """INSERT INTO instagram_comment_rules(channel_id,media_id,keywords_json,private_reply_text,enabled)
