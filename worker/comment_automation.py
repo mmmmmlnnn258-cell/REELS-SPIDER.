@@ -85,6 +85,11 @@ def _sync_zernio_rule(conn: sqlite3.Connection, rule, now_iso: str, logger=None)
         return
 
     try:
+        if rule["last_error"] and rule["last_polled_at"]:
+            previous = datetime.fromisoformat(str(rule["last_polled_at"]).replace("Z", "+00:00"))
+            current = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+            if current - previous < timedelta(minutes=5):
+                return
         if automation_id and rule["zernio_media_id"] and str(rule["zernio_media_id"]) != str(rule["media_id"]):
             raise RuntimeError("The rule's Instagram media binding changed; refusing to update the old Zernio automation.")
         if not rule["zernio_account_id"] or not rule["zernio_profile_id"]:
