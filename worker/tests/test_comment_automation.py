@@ -165,8 +165,11 @@ def test_zernio_rule_creates_remote_automation_and_persists_id(monkeypatch):
         created = []
         def __init__(self):
             pass
-        def create_comment_automation(self, body, *, idempotency_key):
-            self.created.append((body, idempotency_key))
+        def list_comment_automations(self, *, profile_id):
+            assert profile_id == "z-profile"
+            return []
+        def create_comment_automation(self, body):
+            self.created.append(body)
             return {"id": "z-automation-1"}
         def update_comment_automation(self, automation_id, body):
             raise AssertionError("new rule should be created, not updated")
@@ -177,7 +180,7 @@ def test_zernio_rule_creates_remote_automation_and_persists_id(monkeypatch):
                                    client_for=lambda _: called.append(True))
     assert count == 0
     assert called == []
-    body, key = fake.created[0]
+    body = fake.created[0]
     assert body["profileId"] == "z-profile"
     assert body["accountId"] == "z-account"
     assert body["platformPostId"] == "reel-1"
@@ -187,7 +190,7 @@ def test_zernio_rule_creates_remote_automation_and_persists_id(monkeypatch):
     assert body["commentReply"] == "Sent ❤️"
     assert body["repeatPolicy"] == {"mode": "every_comment"}
     assert body["isActive"] is True
-    assert key == "black-spider-comment-rule-1"
+
     row = conn.execute("SELECT zernio_automation_id,zernio_config_hash,last_error FROM instagram_comment_rules").fetchone()
     assert row["zernio_automation_id"] == "z-automation-1"
     assert row["zernio_config_hash"]
