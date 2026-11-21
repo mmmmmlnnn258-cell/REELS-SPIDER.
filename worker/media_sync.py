@@ -111,6 +111,46 @@ def _map_threads(item: dict) -> dict:
     }
 
 
+def _list_zernio(client, channel, page_size, next_page, *, config, now):
+    """Read account posts through Zernio's account-filtered analytics listing."""
+    page = int(next_page or 1)
+    days = min(max(int(config.media_sync_max_age_days), 1), 366)
+    start = (now - timedelta(days=days)).strftime("%Y-%m-%d")
+    end = now.strftime("%Y-%m-%d")
+    rows, next_value = client.list_analytics_posts(
+        account_id=channel["zernio_account_id"], page=page,
+        limit=min(max(int(page_size), 1), 100), from_date=start, to_date=end,
+    )
+    flattened = []
+    for post in rows:
+        entries = post.get("platformAnalytics") or []
+        entry = next((item for item in entries if isinstance(item, dict)
+                      and item.get("platform") == "instagram"
+                      and str(item.get("accountId") or "") == str(channel["zernio_account_id"])), None)
+        if entry is None:
+            continue
+        flattened.append({**post, "_zernio_platform_entry": entry,
+                          "id": entry.get("platformPostId"),
+                          "permalink": entry.get("platformPostUrl") or post.get("platformPostUrl")})
+    return flattened, next_value
+
+
+def _map_zernio(item: dict) -> dict:
+    entry = item.get("_zernio_platform_entry") or {}
+    media_type = str(item.get("mediaType") or "").upper()
+    if media_type == "CAROUSEL":
+        media_type = "CAROUSEL_ALBUM"
+    published = parse_meta_timestamp(item.get("publishedAt"))
+    return {
+        "remote_post_id": entry.get("platformPostId") or item.get("id"),
+        "media_type": media_type or None,
+        "media_product_type": item.get("mediaProductType"),
+        "permalink": entry.get("platformPostUrl") or item.get("platformPostUrl"),
+        "caption": item.get("content"),
+        "thumbnail_url": item.get("thumbnailUrl"),
+        "published_at": published,
+    }
+
 def _list_instagram(client, channel, page_size, next_url):
     keys = channel.keys() if hasattr(channel, "keys") else ()
     method = channel["instagram_auth_method"] if "instagram_auth_method" in keys else "legacy"
@@ -312,7 +352,8 @@ def sync_channel_media(conn, config, client, channel, now, budget, logger=None) 
     Returns a summary dict. Never raises for API failures — a channel whose token expired
     must not stop the other channels from syncing.
     """
-    adapter = _ADAPTERS.get(channel["platform"])
+    is_zernio = bool(channel["platform"] == "instagram" and channel["zernio_account_id"])
+    adapter = (_list_zernio, _map_zernio) if is_zernio else _ADAPTERS.get(channel["platform"])
     if adapter is None:
         return {"skipped": "platform has no media list"}
     list_page, map_item = adapter
@@ -355,7 +396,10 @@ def sync_channel_media(conn, config, client, channel, now, budget, logger=None) 
         if budget.exhausted(client):
             break
         budget.spend()
-        items, next_url = list_page(client, channel, config.media_sync_page_size, next_url)
+        if is_zernio:
+            items, next_url = list_page(client, channel, config.media_sync_page_size, next_url, config=config, now=now)
+        else:
+            items, next_url = list_page(client, channel, config.media_sync_page_size, next_url)
         pages += 1
 
         stop = False
@@ -466,14 +510,19 @@ def run_media_sync(conn, config, client=None, now=None, logger=None, client_for=
     for channel in rows:
         if _ADAPTERS.get(channel["platform"]) is None:
             continue
-        if not channel["access_token"] or not channel["remote_account_id"]:
+        is_zernio = channel["platform"] == "instagram" and bool(channel["zernio_account_id"])
+        if not is_zernio and (not channel["access_token"] or not channel["remote_account_id"]):
             continue
         due = _is_due(channel, now, config)
         if not due:
             continue
         client_obj = None
         try:
-            client_obj = pick_client(channel)
+            if is_zernio:
+                from .zernio_client import ZernioClient
+                client_obj = ZernioClient()
+            else:
+                client_obj = pick_client(channel)
             sync_channel_media(conn, config, client_obj, channel, now, budget, logger=logger)
             synced += 1
         except Exception as exc:  # noqa: BLE001 — one bad channel must not stop the rest
