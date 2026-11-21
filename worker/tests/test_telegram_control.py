@@ -721,3 +721,50 @@ def test_telegram_dm_list_reads_zernio_conversations(monkeypatch, conn, config):
         (channel_id,),
     ).fetchone()
     assert ref["conversation_id"] == "thread-z-1"
+
+
+def test_telegram_comment_inbox_reads_zernio_comments(monkeypatch, conn, config):
+    channel_id = conn.execute(
+        """INSERT INTO channels(platform,account_name,zernio_account_id,zernio_profile_id,is_active)
+           VALUES ('instagram','zernio channel','z-account','z-profile',1)"""
+    ).lastrowid
+    rule_id = conn.execute(
+        """INSERT INTO instagram_comment_rules(channel_id,media_id,keywords_json,private_reply_text,enabled)
+           VALUES (?, 'ig-media-1', '[\"hello\"]', 'Welcome', 1)""", (channel_id,)
+    ).lastrowid
+    conn.commit()
+    class FakeZernio:
+        def __init__(self):
+            pass
+        def list_post_comments(self, post_id, *, account_id, limit):
+            assert post_id == "ig-media-1"
+            assert account_id == "z-account"
+            return [{"id": "comment-1", "text": "hello", "author": {"username": "customer"}}]
+    monkeypatch.setattr("worker.zernio_client.ZernioClient", FakeZernio)
+    client = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), client, callback(data=f"bs:comment:fetch:{rule_id}"),
+        graph_client_for=None,
+    )
+    assert "customer: hello" in client.messages[0][1]
+
+
+def test_zernio_comment_rule_can_be_toggled_from_telegram(conn, config):
+    channel_id = conn.execute(
+        """INSERT INTO channels(platform,account_name,zernio_account_id,zernio_profile_id,is_active)
+           VALUES ('instagram','zernio channel','z-account','z-profile',1)"""
+    ).lastrowid
+    rule_id = conn.execute(
+        """INSERT INTO instagram_comment_rules(channel_id,media_id,keywords_json,private_reply_text,enabled)
+           VALUES (?, 'ig-media-1', '[\"hello\"]', 'Welcome', 0)""", (channel_id,)
+    ).lastrowid
+    conn.commit()
+    client = FakeTelegram()
+    assert process_control_update(
+        conn, cfg(config), client, callback(data=f"bs:comment:{rule_id}"),
+        graph_client_for=None,
+    )
+    assert conn.execute(
+        "SELECT enabled FROM instagram_comment_rules WHERE id=?", (rule_id,)
+    ).fetchone()[0] == 1
+    assert "تم تشغيل" in client.messages[0][1]
