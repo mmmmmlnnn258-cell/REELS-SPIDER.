@@ -97,7 +97,7 @@ def test_create_post_is_publish_now_and_idempotent():
     assert result["remote_post_id"] == "ig-post-1"
     method, url, kwargs = session.calls[0]
     assert method == "POST" and url.endswith("/posts")
-    assert kwargs["headers"]["Idempotency-Key"] == "black-spider-publication-42"
+    assert kwargs["headers"]["x-request-id"] == "black-spider-publication-42"
     assert kwargs["json"]["publishNow"] is True
     assert kwargs["json"]["platforms"] == [{
         "platform": "instagram", "accountId": "ig-account-1",
@@ -168,10 +168,10 @@ def test_create_comment_automation_requires_profile_and_returns_id():
         "profileId": "profile-1", "accountId": "ig-account",
         "name": "BLACK SPIDER rule 4", "keywords": ["price"],
         "dmMessage": "Here is the information", "isActive": False,
-    }, idempotency_key="black-spider-rule-4")
+    })
     assert automation["id"] == "automation-1"
     assert session.calls[0][1].endswith("/comment-automations")
-    assert session.calls[0][2]["headers"]["Idempotency-Key"] == "black-spider-rule-4"
+    assert "Idempotency-Key" not in session.calls[0][2]["headers"]
 
 
 def test_list_comment_automations_is_profile_scoped():
