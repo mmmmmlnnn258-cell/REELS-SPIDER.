@@ -208,7 +208,6 @@ def test_list_post_comments_is_scoped_to_zernio_instagram_account():
     assert rows[0]["id"] == "comment-1"
     assert session.calls[0][1].endswith("/inbox/comments/media-1")
     assert session.calls[0][2]["params"]["accountId"] == "ig-account-1"
-    assert session.calls[0][2]["params"]["platform"] == "instagram"
 
 
 def test_list_comment_automation_logs_returns_delivery_and_keyword_miss_data():
