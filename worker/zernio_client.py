@@ -121,6 +121,71 @@ class ZernioClient:
             raise ZernioError("Zernio did not return a valid Instagram authorization URL.")
         return auth_url
 
+    def upload_media(self, path, *, media_type: str) -> dict:
+        """Upload a local media file using Zernio's presigned URL flow."""
+        from pathlib import Path
+        import mimetypes
+
+        file_path = Path(path)
+        if not file_path.is_file():
+            raise ZernioError("Media file is missing from local storage.")
+        mime_type = mimetypes.guess_type(file_path.name)[0]
+        if not mime_type or mime_type == "application/octet-stream":
+            raise ZernioError("Media file has no supported MIME type.")
+        size = file_path.stat().st_size
+        presign = self._request("POST", "/media/presign", json={
+            "filename": file_path.name,
+            "contentType": mime_type,
+            "size": size,
+        })
+        upload_url = presign.get("uploadUrl")
+        public_url = presign.get("publicUrl")
+        if not isinstance(upload_url, str) or not upload_url.startswith("https://") or not isinstance(public_url, str) or not public_url.startswith("https://"):
+            raise ZernioError("Zernio did not return valid media upload URLs.")
+        try:
+            with file_path.open("rb") as stream:
+                response = self._session.put(upload_url, data=stream, headers={"Content-Type": mime_type}, timeout=self._timeout)
+        except requests.RequestException:
+            raise ZernioError("Could not upload media to Zernio storage.") from None
+        if response.status_code < 200 or response.status_code >= 300:
+            raise ZernioError(f"Zernio media storage rejected the upload (HTTP {response.status_code}).")
+        return {"url": public_url, "type": "video" if mime_type.startswith("video/") else "image"}
+
+    def create_post(self, *, content: str | None, account_id: str, media_items: list[dict],
+                    content_type: str | None = None, first_comment: str | None = None,
+                    idempotency_key: str) -> dict:
+        """Create a single-account Instagram post with retry-safe request identity."""
+        if not account_id or not media_items:
+            raise ZernioError("A connected Instagram account and at least one media item are required.")
+        body = {
+            "content": content or "",
+            "mediaItems": media_items,
+            "platforms": [{"platform": "instagram", "accountId": account_id}],
+            "publishNow": True,
+        }
+        if content_type in ("reel", "story"):
+            body["contentType"] = content_type
+        if first_comment and content_type != "story":
+            body["firstComment"] = first_comment
+        payload = self._request("POST", "/posts", json=body, headers={"Idempotency-Key": idempotency_key})
+        post = payload.get("post")
+        if not isinstance(post, dict):
+            raise ZernioError("Zernio did not return a post record.")
+        platforms = post.get("platforms")
+        if not isinstance(platforms, list) or not platforms or not isinstance(platforms[0], dict):
+            raise ZernioError("Zernio did not return the Instagram publishing result.")
+        result = platforms[0]
+        status = str(result.get("status") or post.get("status") or "").lower()
+        if status not in ("published", "success", "completed"):
+            reason = result.get("error") or result.get("message") or post.get("message")
+            raise ZernioError("Zernio did not confirm publication" + (f": {str(reason)[:240]}" if reason else "."))
+        remote_id = result.get("platformPostId") or result.get("postId")
+        if not isinstance(remote_id, str) or not remote_id:
+            remote_id = post.get("_id")
+        if not isinstance(remote_id, str) or not remote_id:
+            raise ZernioError("Zernio confirmed publication without returning a post ID.")
+        return {"remote_post_id": remote_id, "zernio_post_id": str(post.get("_id") or ""), "status": status}
+
     def list_accounts(self, *, profile_id: str) -> list[dict]:
         if not profile_id:
             raise ZernioError("A Zernio profile ID is required.")
