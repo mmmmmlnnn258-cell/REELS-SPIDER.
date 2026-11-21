@@ -81,6 +81,8 @@ def _claim_event(conn: sqlite3.Connection, comment_id: str, rule: sqlite3.Row,
 def _sync_zernio_rule(conn: sqlite3.Connection, rule, now_iso: str, logger=None) -> None:
     """Mirror one local rule into Zernio; Zernio owns delivery and deduplication."""
     automation_id = rule["zernio_automation_id"]
+    if automation_id and rule["zernio_media_id"] and str(rule["zernio_media_id"]) != str(rule["media_id"]):
+        raise RuntimeError("The rule's Instagram media binding changed; refusing to update the old Zernio automation.")
     if not rule["enabled"] and not automation_id:
         return
 
@@ -163,10 +165,11 @@ def _sync_zernio_rule(conn: sqlite3.Connection, rule, now_iso: str, logger=None)
 
         conn.execute(
             """UPDATE instagram_comment_rules
-                  SET zernio_automation_id=?, zernio_config_hash=?,
+                  SET zernio_automation_id=?, zernio_media_id=?, zernio_config_hash=?,
                       last_polled_at=?, last_error=NULL
                 WHERE id=?""",
-            (automation_id, fingerprint, now_iso, rule["id"]),
+            (automation_id, str(rule["media_id"]) if automation_id else None,
+             fingerprint, now_iso, rule["id"]),
         )
         conn.commit()
     except Exception as exc:  # noqa: BLE001 — keep provider details out of logs
