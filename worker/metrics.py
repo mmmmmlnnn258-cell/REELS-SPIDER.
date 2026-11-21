@@ -57,6 +57,7 @@ COLUMN_MAP = {
     "likes": "likes",
     "comments": "comments",
     "saved": "saves",
+    "saves": "saves",
     "shares": "shares",
     "video_views": "video_views",
     "plays": "video_views",
@@ -365,10 +366,11 @@ def run_metrics(conn, config: Config, client, now, logger=None, client_for=None)
                 "SELECT * FROM channels WHERE id = ?",
                 (pub["channel_id"],),
             ).fetchone()
+            is_zernio = bool(channel and channel["platform"] == "instagram" and channel["zernio_account_id"])
             token = channel["access_token"] if channel else None
-            if not token:
+            if not is_zernio and not token:
                 continue
-            platform = channel["platform"]
+            platform = channel["platform"] if channel else None
             if platform not in _FETCHERS:
                 # Missing entirely from the registry — someone forgot to register this
                 # platform. That's worth a log line every time it happens.
@@ -388,11 +390,17 @@ def run_metrics(conn, config: Config, client, now, logger=None, client_for=None)
                     )
                 continue
             try:
-                insights = fetch(
-                    pick_client(channel), pub["remote_post_id"], token,
-                    config, logger, pub["id"],
-                    pub["surface"] if "surface" in pub.keys() else "feed",
-                )
+                if is_zernio:
+                    from .zernio_client import ZernioClient
+                    insights = ZernioClient().get_post_analytics(
+                        pub["remote_post_id"], account_id=channel["zernio_account_id"]
+                    )
+                else:
+                    insights = fetch(
+                        pick_client(channel), pub["remote_post_id"], token,
+                        config, logger, pub["id"],
+                        pub["surface"] if "surface" in pub.keys() else "feed",
+                    )
             except Exception as exc:  # noqa: BLE001 — a metrics fetch failure is non-fatal
                 _note_failure(conn, pub, exc, now_iso, logger)
                 continue
