@@ -12,6 +12,9 @@ const PUBLIC_PATHS = new Set([
   "/api/channels/instagram/callback",
   // The handler validates and atomically consumes a short-lived Telegram bearer ticket.
   "/api/channels/instagram/telegram",
+  // Zernio routes validate a short-lived Telegram bearer ticket or the OAuth callback state.
+  "/api/channels/instagram/zernio/telegram",
+  "/api/channels/instagram/zernio/callback",
   "/api/channels/tiktok/callback",
 ]);
 
