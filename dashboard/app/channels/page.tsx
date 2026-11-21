@@ -212,7 +212,7 @@ export default async function ChannelsPage({
                   ) : null}
                   <Row label="Connection">
                     {c.zernio_account_id ? (
-                      <span className="data text-status-posted">Zernio · @{c.account_name} linked</span>
+                      <span className="data text-status-posted">Zernio · @{c.zernio_username || c.account_name} linked</span>
                     ) : (
                       <TokenStatus channel={c} nowMs={nowMs} />
                     )}
@@ -283,7 +283,7 @@ export default async function ChannelsPage({
                         <p className="text-xs font-medium text-ink-soft">Instagram connection</p>
                         <p className="mt-0.5 text-[11px] text-muted">
                           {c.zernio_account_id
-                            ? "Instagram is authorized through Zernio. Posting and inbox actions are not enabled by this connection yet."
+                            ? "Instagram is authorized through Zernio as @{c.zernio_username || c.account_name}. Posting and inbox actions are not enabled by this connection yet."
                             : c.has_access_token && c.remote_account_id
                               ? "This channel is linked. Reconnect only if its access needs refreshing."
                               : "Connect this existing channel securely. Its name, timezone, queue and history will be kept."}
