@@ -190,6 +190,72 @@ class ZernioClient:
             raise ZernioError("Zernio confirmed publication without returning a platform post ID or URL.")
         return {"remote_post_id": remote_id, "zernio_post_id": str(post.get("_id") or ""), "status": status}
 
+    def list_analytics_posts(self, *, account_id: str, page: int = 1,
+                             limit: int = 50, from_date: str | None = None,
+                             to_date: str | None = None) -> tuple[list[dict], str | None]:
+        """List account-owned Instagram posts and their latest analytics snapshots."""
+        if not account_id:
+            raise ZernioError("A Zernio account ID is required.")
+        params = {
+            "platform": "instagram",
+            "accountId": account_id,
+            "source": "all",
+            "limit": min(max(int(limit), 1), 100),
+            "page": max(int(page), 1),
+        }
+        if from_date:
+            params["fromDate"] = from_date
+        if to_date:
+            params["toDate"] = to_date
+        payload = self._request("GET", "/analytics", params=params)
+        rows = payload.get("posts", [])
+        pagination = payload.get("pagination") or {}
+        if not isinstance(rows, list) or not isinstance(pagination, dict):
+            raise ZernioError("Zernio returned an invalid analytics post list.")
+        current = int(pagination.get("page") or page)
+        total_pages = pagination.get("totalPages") or pagination.get("total_pages")
+        has_more = pagination.get("hasMore")
+        if has_more is None:
+            has_more = pagination.get("hasNextPage")
+        if has_more is None and total_pages is not None:
+            has_more = current < int(total_pages)
+        if has_more is None:
+            # If the provider omits pagination metadata, a full page is not proof
+            # that the backfill is complete. Continue one page and let an empty page
+            # establish the end rather than marking unseen media as deleted.
+            has_more = len(rows) >= params["limit"]
+        next_page = str(current + 1) if has_more else None
+        return [row for row in rows if isinstance(row, dict)], next_page
+
+    def get_post_analytics(self, post_id: str, *, account_id: str) -> dict:
+        """Read one Instagram post's analytics, selecting the connected account copy."""
+        if not post_id or not account_id:
+            raise ZernioError("A post ID and Zernio account ID are required.")
+        payload = self._request("GET", "/analytics", params={
+            "postId": post_id,
+            "platform": "instagram",
+            "accountId": account_id,
+        })
+        if str(payload.get("syncStatus") or "").lower() == "pending":
+            raise ZernioError("Zernio analytics are still syncing for this Instagram post.")
+        entries = payload.get("platformAnalytics") or []
+        if not isinstance(entries, list):
+            raise ZernioError("Zernio returned invalid post analytics.")
+        for entry in entries:
+            if (isinstance(entry, dict)
+                    and entry.get("platform") == "instagram"
+                    and str(entry.get("accountId") or "") == str(account_id)):
+                values = entry.get("analytics")
+                if isinstance(values, dict):
+                    return values
+                if entry.get("syncStatus") == "unavailable":
+                    raise ZernioError("Zernio cannot read analytics for this Instagram post.")
+        # Some API versions return the account-filtered metrics only at the top level.
+        values = payload.get("analytics")
+        if isinstance(values, dict):
+            return values
+        raise ZernioError("Zernio did not return analytics for the connected Instagram account.")
+
     def list_post_comments(self, post_id: str, *, account_id: str,
                            limit: int = 25) -> list[dict]:
         """Read a post's Instagram comment thread from the Zernio inbox API."""
