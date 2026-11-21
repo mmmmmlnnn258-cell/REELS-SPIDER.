@@ -289,6 +289,20 @@ def _selected_zernio_channel_id(conn, chat_id, sender_id):
     ).fetchone()
     return channel_id if owned else -1
 
+def _telegram_can_access_zernio_channel(conn, channel_id, chat_id, sender_id):
+    """Authorize a Zernio account against its owning Telegram identity and selection."""
+    row = conn.execute(
+        """SELECT id FROM channels
+            WHERE id=? AND platform='instagram' AND is_active=1
+              AND zernio_account_id IS NOT NULL AND TRIM(zernio_account_id)<>''
+              AND zernio_telegram_chat_id=? AND zernio_telegram_user_id=?""",
+        (int(channel_id), str(chat_id), str(sender_id)),
+    ).fetchone()
+    if row is None:
+        return False
+    selected_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
+    return selected_id in (None, int(row["id"]))
+
 
 def _telegram_can_access_publication(conn, publication_id, chat_id, sender_id):
     row = conn.execute(
@@ -517,6 +531,11 @@ def _dm_view(conn, client, graph_client_for, token, chat_id, channel_id, convers
           )""", (channel_id,)).fetchone()
     if channel is None:
         _send(client, token, chat_id, "القناة غير متصلة.", _menu())
+        return
+    if channel["zernio_account_id"] and not _telegram_can_access_zernio_channel(
+        conn, channel_id, chat_id, chat_id
+    ):
+        _send(client, token, chat_id, "لا تملك صلاحية فتح هذه المحادثة أو أن حساباً آخر محدد.", _menu())
         return
     graph = None
     try:
@@ -1258,6 +1277,10 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                     WHERE id=? AND platform='instagram' AND is_active=1""", (row["channel_id"],)).fetchone()
                 if channel is None:
                     raise RuntimeError("قناة Instagram غير متصلة.")
+                if channel["zernio_account_id"] and not _telegram_can_access_zernio_channel(
+                    conn, channel["id"], chat_id, chat_id
+                ):
+                    raise RuntimeError("لا تملك صلاحية إرسال رد من هذا الحساب أو أن حساباً آخر محدد.")
                 if channel["zernio_account_id"]:
                     from .zernio_client import ZernioClient
                     provider_label = "Zernio"
