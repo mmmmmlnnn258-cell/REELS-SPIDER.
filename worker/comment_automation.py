@@ -106,13 +106,11 @@ def _sync_zernio_rule(conn: sqlite3.Connection, rule, now_iso: str, logger=None)
             "keywords": [str(item) for item in keywords],
             "matchMode": "word",
             "dmMessage": remote_template(private_text),
+            "commentReply": remote_template(str(rule["public_reply_text"] or "").strip()),
             "repeatPolicy": {"mode": "every_comment"},
             "publicReplyPolicy": "after_dm",
             "isActive": bool(rule["enabled"]),
         }
-        public_text = str(rule["public_reply_text"] or "").strip()
-        if public_text:
-            body["commentReply"] = remote_template(public_text)
 
         fingerprint = hashlib.sha256(
             json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -128,7 +126,15 @@ def _sync_zernio_rule(conn: sqlite3.Connection, rule, now_iso: str, logger=None)
         from .zernio_client import ZernioClient
         zernio = ZernioClient()
         if automation_id:
-            zernio.update_comment_automation(automation_id, body)
+            # PATCH accepts editable copy/keyword/active fields; the original post
+            # binding and repeat policy remain as created.
+            update_body = {
+                key: body[key] for key in (
+                    "name", "trigger", "keywords", "matchMode",
+                    "dmMessage", "commentReply", "isActive",
+                )
+            }
+            zernio.update_comment_automation(automation_id, update_body)
         elif rule["enabled"]:
             create_body = {
                 **body,
