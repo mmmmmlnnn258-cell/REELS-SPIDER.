@@ -7,6 +7,7 @@ marked unknown and are never retried automatically.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -76,16 +77,102 @@ def _claim_event(conn: sqlite3.Connection, comment_id: str, rule: sqlite3.Row,
     return False
 
 
+
+def _sync_zernio_rule(conn: sqlite3.Connection, rule, now_iso: str, logger=None) -> None:
+    """Mirror one local rule into Zernio; Zernio owns delivery and deduplication."""
+    automation_id = rule["zernio_automation_id"]
+    if not rule["enabled"] and not automation_id:
+        return
+
+    try:
+        if not rule["zernio_account_id"] or not rule["zernio_profile_id"]:
+            raise RuntimeError("Zernio account/profile mapping is incomplete.")
+        keywords = json.loads(rule["keywords_json"] or "[]")
+        private_text = str(rule["private_reply_text"] or "").strip()
+        if rule["enabled"] and (not keywords or not private_text):
+            raise RuntimeError(
+                "Zernio automation needs at least one keyword and a private reply."
+            )
+
+        def remote_template(value: str) -> str:
+            return (value or "").replace("{link}", str(rule["link_url"] or "")).replace(
+                "{media_id}", str(rule["media_id"] or "")
+            ).replace("{username}", "{{username}}")
+
+        body = {
+            "name": f"BLACK SPIDER rule #{rule['id']}",
+            "trigger": "comment",
+            "platformPostId": str(rule["media_id"]),
+            "keywords": [str(item) for item in keywords],
+            "matchMode": "word",
+            "dmMessage": remote_template(private_text),
+            "repeatPolicy": {"mode": "every_comment"},
+            "publicReplyPolicy": "after_dm",
+            "isActive": bool(rule["enabled"]),
+        }
+        public_text = str(rule["public_reply_text"] or "").strip()
+        if public_text:
+            body["commentReply"] = remote_template(public_text)
+
+        fingerprint = hashlib.sha256(
+            json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        if fingerprint == rule["zernio_config_hash"] and automation_id:
+            conn.execute(
+                "UPDATE instagram_comment_rules SET last_polled_at=?, last_error=NULL WHERE id=?",
+                (now_iso, rule["id"]),
+            )
+            conn.commit()
+            return
+
+        from .zernio_client import ZernioClient
+        zernio = ZernioClient()
+        if automation_id:
+            zernio.update_comment_automation(automation_id, body)
+        elif rule["enabled"]:
+            create_body = {
+                **body,
+                "profileId": rule["zernio_profile_id"],
+                "accountId": rule["zernio_account_id"],
+            }
+            created = zernio.create_comment_automation(
+                create_body, idempotency_key=f"black-spider-comment-rule-{rule['id']}"
+            )
+            automation_id = created["id"]
+
+        conn.execute(
+            """UPDATE instagram_comment_rules
+                  SET zernio_automation_id=?, zernio_config_hash=?,
+                      last_polled_at=?, last_error=NULL
+                WHERE id=?""",
+            (automation_id, fingerprint, now_iso, rule["id"]),
+        )
+        conn.commit()
+    except Exception as exc:  # noqa: BLE001 — keep provider details out of logs
+        from .redact import redact
+        error = redact(str(exc))[:500]
+        conn.execute(
+            "UPDATE instagram_comment_rules SET last_polled_at=?, last_error=? WHERE id=?",
+            (now_iso, error, rule["id"]),
+        )
+        conn.commit()
+        if logger:
+            logger.warning("[Zernio comment rule %s] sync failed: %s", rule["id"], error)
+
 def run_comment_automation(conn, config, now=None, logger=None, client_for=None) -> int:
     """Poll enabled Reel rules and send at most one private reply per comment."""
     now = now or datetime.now(timezone.utc)
     now_iso = now.isoformat()
     rows = conn.execute(
-        """SELECT r.*, c.access_token, c.remote_account_id, c.platform, c.account_name, c.instagram_auth_method
+        """SELECT r.*, c.access_token, c.remote_account_id, c.platform, c.account_name,
+                  c.instagram_auth_method, c.zernio_account_id, c.zernio_profile_id
            FROM instagram_comment_rules r
            JOIN channels c ON c.id = r.channel_id
-           WHERE r.enabled = 1 AND c.is_active = 1 AND c.platform = 'instagram'
-             AND c.access_token IS NOT NULL AND c.remote_account_id IS NOT NULL"""
+           WHERE c.is_active = 1 AND c.platform = 'instagram'
+             AND (
+               (c.access_token IS NOT NULL AND c.remote_account_id IS NOT NULL)
+               OR (c.zernio_account_id IS NOT NULL AND TRIM(c.zernio_account_id)<>'')
+             )"""
     ).fetchall()
     sent = 0
     private_replies_this_cycle = 0
@@ -93,6 +180,11 @@ def run_comment_automation(conn, config, now=None, logger=None, client_for=None)
     hour_cutoff = (now - timedelta(hours=1)).isoformat()
     stop_after_current_rule = False
     for rule in rows:
+        if rule["zernio_account_id"]:
+            _sync_zernio_rule(conn, rule, now_iso, logger=logger)
+            continue
+        if not rule["enabled"]:
+            continue
         if rule["last_polled_at"]:
             try:
                 last = datetime.fromisoformat(rule["last_polled_at"])
