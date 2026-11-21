@@ -148,9 +148,16 @@ def _schedule_rows(conn):
     ).fetchall()
 
 
-def _schedule_list(conn, client, token: str, chat_id: str, page: int = 0):
+def _schedule_list(conn, client, token: str, chat_id: str, sender_id: str, page: int = 0):
+    selected_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
+    scope = """(c.zernio_account_id IS NULL OR (
+        c.zernio_telegram_chat_id=? AND c.zernio_telegram_user_id=?
+        AND (? IS NULL OR c.id=?)))"""
+    scope_args = (chat_id, sender_id, selected_id, selected_id)
     total = conn.execute(
-        "SELECT COUNT(*) FROM publications WHERE status IN ('scheduled', 'pending_approval')"
+        """SELECT COUNT(*) FROM publications pub JOIN channels c ON c.id=pub.channel_id
+            WHERE pub.status IN ('scheduled', 'pending_approval') AND """ + scope,
+        scope_args,
     ).fetchone()[0]
     page_size = 8
     page_count = max(1, (total + page_size - 1) // page_size)
@@ -161,9 +168,9 @@ def _schedule_list(conn, client, token: str, chat_id: str, page: int = 0):
              FROM publications pub
              JOIN posts p ON p.id = pub.post_id
              JOIN channels c ON c.id = pub.channel_id
-            WHERE pub.status IN ('scheduled', 'pending_approval')
+            WHERE pub.status IN ('scheduled', 'pending_approval') AND """ + scope + """
             ORDER BY pub.scheduled_at ASC, pub.id ASC LIMIT ? OFFSET ?""",
-        (page_size, page * page_size),
+        (*scope_args, page_size, page * page_size),
     ).fetchall()
     if not rows:
         _send(client, token, chat_id, "📅 لا توجد منشورات مجدولة حالياً.", {
@@ -191,15 +198,19 @@ def _schedule_list(conn, client, token: str, chat_id: str, page: int = 0):
     keyboard.append([{"text": "↩ القائمة", "callback_data": "bs:menu"}])
     _send(client, token, chat_id, "\n".join(lines), {"inline_keyboard": keyboard})
 
-def _schedule_detail(conn, client, token: str, chat_id: str, publication_id: int, page: int = 0):
+def _schedule_detail(conn, client, token: str, chat_id: str, sender_id: str, publication_id: int, page: int = 0):
+    selected_id = _selected_zernio_channel_id(conn, chat_id, sender_id)
     row = conn.execute(
         """SELECT pub.id, pub.status, pub.scheduled_at, pub.is_held, pub.post_id,
                   p.caption, p.post_type, c.account_name, c.timezone
              FROM publications pub
              JOIN posts p ON p.id = pub.post_id
              JOIN channels c ON c.id = pub.channel_id
-            WHERE pub.id = ? AND pub.status IN ('scheduled', 'pending_approval')""",
-        (publication_id,),
+            WHERE pub.id = ? AND pub.status IN ('scheduled', 'pending_approval')
+              AND (c.zernio_account_id IS NULL OR (
+                c.zernio_telegram_chat_id=? AND c.zernio_telegram_user_id=?
+                AND (? IS NULL OR c.id=?)))""",
+        (publication_id, chat_id, sender_id, selected_id, selected_id),
     ).fetchone()
     if row is None:
         _send(client, token, chat_id, "هذا الموعد لم يعد مجدولاً.", {
@@ -914,14 +925,14 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                        (update_id, chat_id, status) VALUES (?, ?, 'ignored')""",
                     (int(update_id), chat_id),
                 )
-            _schedule_list(conn, client, token, chat_id)
+            _schedule_list(conn, client, token, chat_id, sender_id)
             return True
         if data.startswith("bs:schedule:page:"):
             raw_page = data.removeprefix("bs:schedule:page:")
             if not raw_page.isdigit() or len(raw_page) > 5:
                 _send(client, token, chat_id, "رقم صفحة غير صالح.", _menu())
                 return True
-            _schedule_list(conn, client, token, chat_id, int(raw_page))
+            _schedule_list(conn, client, token, chat_id, sender_id, int(raw_page))
             return True
         if data.startswith("bs:schedule:view:"):
             parts = data.removeprefix("bs:schedule:view:").split(":")
@@ -932,7 +943,7 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 _send(client, token, chat_id, "رقم صفحة غير صالح.", _menu())
                 return True
             page = int(parts[1]) if len(parts) == 2 else 0
-            _schedule_detail(conn, client, token, chat_id, int(parts[0]), page)
+            _schedule_detail(conn, client, token, chat_id, sender_id, int(parts[0]), page)
             return True
         if data.startswith("bs:schedule:reschedule:"):
             raw_id = data.removeprefix("bs:schedule:reschedule:")
