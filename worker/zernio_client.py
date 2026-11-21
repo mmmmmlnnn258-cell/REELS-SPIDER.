@@ -200,7 +200,6 @@ class ZernioClient:
         path = f"/inbox/comments/{quote(post_id, safe='')}"
         payload = self._request("GET", path, params={
             "accountId": account_id,
-            "platform": "instagram",
             "limit": min(max(int(limit), 1), 100),
         })
         rows = payload.get("comments", [])
