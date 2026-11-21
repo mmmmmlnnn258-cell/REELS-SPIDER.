@@ -6,8 +6,6 @@ credentials, or raw response bodies in exceptions or logs.
 from __future__ import annotations
 
 import os
-from urllib.parse import urlencode
-
 import requests
 
 
@@ -29,7 +27,7 @@ class ZernioClient:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
 
-    def _request(self, method: str, path: str, *, params=None, json=None):
+    def _request(self, method: str, path: str, *, params=None, json=None, headers=None):
         url = self._base_url + "/" + path.lstrip("/")
         try:
             response = self._session.request(
@@ -39,6 +37,7 @@ class ZernioClient:
                     "Authorization": f"Bearer {self._api_key}",
                     "Accept": "application/json",
                     "Content-Type": "application/json",
+                    **(headers or {}),
                 },
                 params=params,
                 json=json,
@@ -80,10 +79,8 @@ class ZernioClient:
         return [item for item in profiles if isinstance(item, dict)]
 
     def create_profile(self, name: str, *, idempotency_key: str | None = None) -> str:
-        headers = None
-        # _request intentionally centralizes auth. Profile creation is safe to retry
-        # using the provider's idempotency header when supplied.
-        payload = self._request("POST", "/profiles", json={
+        headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+        payload = self._request("POST", "/profiles", headers=headers, json={
             "name": name,
             "description": "BLACK SPIDER SocialScheduler",
         })
