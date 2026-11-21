@@ -121,7 +121,7 @@ class ZernioClient:
             raise ZernioError("Zernio did not return a valid Instagram authorization URL.")
         return auth_url
 
-    def upload_media(self, path, *, media_type: str) -> dict:
+    def upload_media(self, path, *, media_type: str | None = None) -> dict:
         """Upload a local media file using Zernio's presigned URL flow."""
         from pathlib import Path
         import mimetypes
