@@ -916,9 +916,15 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
         if data == "bs:status":
             heartbeat = conn.execute("SELECT last_seen_at FROM worker_heartbeat WHERE id=1").fetchone()
             channels = conn.execute(
-                "SELECT COUNT(*) FROM channels WHERE platform='instagram' AND is_active=1 "
-                "AND remote_account_id IS NOT NULL AND TRIM(remote_account_id)<>'' "
-                "AND access_token IS NOT NULL AND TRIM(access_token)<>''"
+                """SELECT COUNT(*) FROM channels
+                    WHERE platform='instagram' AND is_active=1
+                      AND (
+                        (remote_account_id IS NOT NULL AND TRIM(remote_account_id)<>''
+                         AND access_token IS NOT NULL AND TRIM(access_token)<>'')
+                        OR (zernio_account_id IS NOT NULL AND TRIM(zernio_account_id)<>''
+                            AND zernio_telegram_chat_id=? AND zernio_telegram_user_id=?)
+                      )""",
+                (chat_id, sender_id),
             ).fetchone()[0]
             queued = conn.execute("SELECT COUNT(*) FROM publications WHERE status='scheduled'").fetchone()[0]
             failed = conn.execute("SELECT COUNT(*) FROM publications WHERE status='failed'").fetchone()[0]
