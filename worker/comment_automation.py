@@ -125,6 +125,23 @@ def _sync_zernio_rule(conn: sqlite3.Connection, rule, now_iso: str, logger=None)
 
         from .zernio_client import ZernioClient
         zernio = ZernioClient()
+        if not automation_id and rule["enabled"]:
+            # Reconcile after an ambiguous timeout before creating anything again.
+            matches = [
+                item for item in zernio.list_comment_automations(
+                    profile_id=rule["zernio_profile_id"]
+                )
+                if item.get("name") == body["name"]
+                and item.get("accountId") == rule["zernio_account_id"]
+                and str(item.get("platformPostId") or "") == str(rule["media_id"])
+            ]
+            if len(matches) > 1:
+                raise RuntimeError("Multiple remote automations match this BLACK SPIDER rule; refusing to choose.")
+            if matches:
+                automation_id = str(matches[0].get("id") or "")
+                if not automation_id:
+                    raise RuntimeError("Matching Zernio automation has no ID.")
+
         if automation_id:
             # PATCH accepts editable copy/keyword/active fields; the original post
             # binding and repeat policy remain as created.
@@ -141,9 +158,7 @@ def _sync_zernio_rule(conn: sqlite3.Connection, rule, now_iso: str, logger=None)
                 "profileId": rule["zernio_profile_id"],
                 "accountId": rule["zernio_account_id"],
             }
-            created = zernio.create_comment_automation(
-                create_body, idempotency_key=f"black-spider-comment-rule-{rule['id']}"
-            )
+            created = zernio.create_comment_automation(create_body)
             automation_id = created["id"]
 
         conn.execute(
