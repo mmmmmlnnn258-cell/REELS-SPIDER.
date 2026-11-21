@@ -685,6 +685,41 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
             url = base + "/api/channels/instagram/zernio/telegram?" + urlencode({"ticket": ticket.token})
             _send(client, token, chat_id, "افتح الرابط لإضافة حساب Instagram خلال 10 دقائق. سجّل الدخول في صفحة Instagram الرسمية؛ لا ترسل كلمة المرور أو رمز التحقق للبوت.", {"inline_keyboard": [[{"text": "➕ تسجيل دخول Instagram", "url": url}]]})
             return True
+        if data.startswith("bs:account:select:z:"):
+            raw_id = data.removeprefix("bs:account:select:z:")
+            if not raw_id.isdigit():
+                _send(client, token, chat_id, "رقم الحساب غير صالح.", _menu())
+                return True
+            account = conn.execute(
+                """SELECT id, account_name, zernio_account_id FROM channels
+                    WHERE id=? AND platform='instagram' AND is_active=1
+                      AND zernio_account_id IS NOT NULL AND TRIM(zernio_account_id)<>''
+                      AND zernio_telegram_chat_id=? AND zernio_telegram_user_id=?""",
+                (int(raw_id), chat_id, sender_id),
+            ).fetchone()
+            if account is None:
+                _send(client, token, chat_id, "الحساب غير موجود أو غير متصل لهذا المستخدم. حدّث قائمة الحسابات.", _menu())
+                return True
+            conn.execute(
+                """INSERT INTO telegram_account_preferences
+                   (telegram_chat_id, telegram_user_id, selected_instagram_account_id,
+                    selected_zernio_channel_id, updated_at)
+                   VALUES (?, ?, NULL, ?, ?)
+                   ON CONFLICT(telegram_chat_id, telegram_user_id) DO UPDATE SET
+                     selected_instagram_account_id=NULL,
+                     selected_zernio_channel_id=excluded.selected_zernio_channel_id,
+                     updated_at=excluded.updated_at""",
+                (chat_id, sender_id, int(account["id"]), datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+            _send(client, token, chat_id,
+                  f"✅ تم اختيار حساب Instagram @{account['account_name']} للإدارة عبر Zernio.\\n"
+                  f"معرّف الحساب: {account['zernio_account_id']}",
+                  {"inline_keyboard": [
+                      [{"text": "👤 الحسابات المرتبطة", "callback_data": "bs:accounts"}],
+                      [{"text": "↩ القائمة", "callback_data": "bs:menu"}],
+                  ]})
+            return True
         if data.startswith("bs:account:select:"):
             raw_id = data.removeprefix("bs:account:select:")
             if not raw_id.isdigit():
@@ -701,16 +736,18 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                 return True
             conn.execute(
                 """INSERT INTO telegram_account_preferences
-                   (telegram_chat_id, telegram_user_id, selected_instagram_account_id, updated_at)
-                   VALUES (?, ?, ?, ?)
+                   (telegram_chat_id, telegram_user_id, selected_instagram_account_id,
+                    selected_zernio_channel_id, updated_at)
+                   VALUES (?, ?, ?, NULL, ?)
                    ON CONFLICT(telegram_chat_id, telegram_user_id) DO UPDATE SET
                      selected_instagram_account_id=excluded.selected_instagram_account_id,
+                     selected_zernio_channel_id=NULL,
                      updated_at=excluded.updated_at""",
                 (chat_id, sender_id, int(account["id"]), datetime.now(timezone.utc).isoformat()),
             )
             conn.commit()
             _send(client, token, chat_id,
-                  f"✅ تم اختيار حساب Instagram @{account['username']} للإدارة.\n"
+                  f"✅ تم اختيار حساب Instagram @{account['username']} للإدارة.\\n"
                   f"معرّف الحساب: {account['instagram_user_id']}",
                   {"inline_keyboard": [
                       [{"text": "👤 الحسابات المرتبطة", "callback_data": "bs:accounts"}],
@@ -726,42 +763,64 @@ def process_control_update(conn, config, client, update: dict, graph_client_for=
                     ORDER BY created_at DESC, id DESC""",
                 (chat_id, sender_id),
             ).fetchall()
+            zernio_rows = conn.execute(
+                """SELECT id, account_name AS username, zernio_account_id
+                     FROM channels
+                    WHERE platform='instagram' AND is_active=1
+                      AND zernio_account_id IS NOT NULL AND TRIM(zernio_account_id)<>''
+                      AND zernio_telegram_chat_id=? AND zernio_telegram_user_id=?
+                    ORDER BY created_at DESC, id DESC""",
+                (chat_id, sender_id),
+            ).fetchall()
             selected = conn.execute(
-                """SELECT selected_instagram_account_id FROM telegram_account_preferences
+                """SELECT selected_instagram_account_id, selected_zernio_channel_id
+                     FROM telegram_account_preferences
                     WHERE telegram_chat_id=? AND telegram_user_id=?""",
                 (chat_id, sender_id),
             ).fetchone()
             selected_id = int(selected["selected_instagram_account_id"]) if selected and selected["selected_instagram_account_id"] else None
+            selected_zernio_id = int(selected["selected_zernio_channel_id"]) if selected and selected["selected_zernio_channel_id"] else None
             lines = ["👤 حسابات Instagram المرتبطة"]
             keyboard = []
-            if not rows:
-                lines.append("\nلا توجد حسابات مرتبطة حتى الآن.")
-            else:
-                for row in rows:
-                    state = {
-                        "connected": "✅ متصل",
-                        "expired": "⌛ انتهت صلاحية الاتصال",
-                        "revoked": "⛔ تم إلغاء الصلاحية",
-                        "error": "⚠️ يحتاج إلى إعادة ربط",
-                    }.get(row["status"], "⚠️ حالة غير معروفة")
-                    selected_label = " ⭐ الحساب المختار" if int(row["id"]) == selected_id else ""
-                    lines.append(
-                        f"\n@{row['username']}{selected_label}\n"
-                        f"المعرّف: {row['instagram_user_id']}\n"
-                        f"الحالة: {state}"
-                    )
-                    if row["status"] == "connected":
-                        keyboard.append([{
-                            "text": ("✓ " if int(row["id"]) == selected_id else "اختيار ")
-                                    + "@" + str(row["username"])[:24],
-                            "callback_data": f"bs:account:select:{row['id']}",
-                        }])
+            if not rows and not zernio_rows:
+                lines.append("\\nلا توجد حسابات مرتبطة حتى الآن.")
+            for row in rows:
+                state = {
+                    "connected": "✅ متصل",
+                    "expired": "⌛ انتهت صلاحية الاتصال",
+                    "revoked": "⛔ تم إلغاء الصلاحية",
+                    "error": "⚠️ يحتاج إلى إعادة ربط",
+                }.get(row["status"], "⚠️ حالة غير معروفة")
+                is_selected = int(row["id"]) == selected_id
+                selected_label = " ⭐ الحساب المختار" if is_selected else ""
+                lines.append(
+                    f"\\n@{row['username']}{selected_label}\\n"
+                    f"المعرّف: {row['instagram_user_id']}\\n"
+                    f"الحالة: {state}"
+                )
+                if row["status"] == "connected":
+                    keyboard.append([{
+                        "text": ("✓ " if is_selected else "اختيار ") + "@" + str(row["username"])[:24],
+                        "callback_data": f"bs:account:select:{row['id']}",
+                    }])
+            for row in zernio_rows:
+                is_selected = int(row["id"]) == selected_zernio_id
+                selected_label = " ⭐ الحساب المختار" if is_selected else ""
+                lines.append(
+                    f"\\n@{row['username']}{selected_label}\\n"
+                    f"المعرّف: {row['zernio_account_id']}\\n"
+                    "الحالة: ✅ متصل عبر Zernio"
+                )
+                keyboard.append([{
+                    "text": ("✓ " if is_selected else "اختيار ") + "@" + str(row["username"])[:24],
+                    "callback_data": f"bs:account:select:z:{row['id']}",
+                }])
             keyboard.extend([
                 [{"text": "➕ إضافة حساب Instagram", "callback_data": "bs:account:add"}],
                 [{"text": "🔄 تحديث", "callback_data": "bs:accounts"}],
                 [{"text": "↩ القائمة", "callback_data": "bs:menu"}],
             ])
-            _send(client, token, chat_id, "\n".join(lines)[:3300], {"inline_keyboard": keyboard})
+            _send(client, token, chat_id, "\\n".join(lines)[:3300], {"inline_keyboard": keyboard})
             return True
 
         if data == "bs:status":
