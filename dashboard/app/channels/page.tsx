@@ -294,7 +294,7 @@ export default async function ChannelsPage({
                         <p className="text-xs font-medium text-ink-soft">Instagram connection</p>
                         <p className="mt-0.5 text-[11px] text-muted">
                           {c.zernio_account_id
-                            ? "Instagram is authorized through Zernio as @{c.zernio_username || c.account_name}. Posting and inbox actions are not enabled by this connection yet."
+                            ? "Instagram is authorized through Zernio as @{c.zernio_username || c.account_name}. The Zernio publishing adapter is being tested in dry-run; comments and inbox are not connected yet."
                             : c.has_access_token && c.remote_account_id
                               ? "This channel is linked. Reconnect only if its access needs refreshing."
                               : "Connect this existing channel securely. Its name, timezone, queue and history will be kept."}
