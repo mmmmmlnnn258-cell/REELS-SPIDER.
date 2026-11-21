@@ -2,7 +2,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from worker.telegram_control import process_control_update
+from worker.telegram_control import process_control_update, _zernio_dm_window
 
 
 class FakeTelegram:
@@ -670,3 +670,54 @@ def test_accounts_screen_exposes_add_instagram_action(conn, config):
         button["callback_data"] == "bs:account:add"
         for row in keyboard for button in row
     )
+
+
+def test_zernio_dm_window_requires_recent_inbound_message():
+    now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
+    allowed, error = _zernio_dm_window([
+        {"direction": "incoming", "createdAt": "2026-11-21T11:30:00Z"}
+    ], now)
+    assert allowed is True
+    assert error == ""
+
+
+def test_zernio_dm_window_fails_closed_when_last_inbound_is_old_or_missing():
+    now = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
+    allowed, error = _zernio_dm_window([
+        {"direction": "incoming", "createdAt": "2026-11-20T10:00:00Z"},
+        {"direction": "outgoing", "createdAt": "2026-11-21T11:59:00Z"},
+    ], now)
+    assert allowed is False
+    assert "24 ساعة" in error
+    allowed, error = _zernio_dm_window([
+        {"direction": "outgoing", "createdAt": "2026-11-21T11:59:00Z"}
+    ], now)
+    assert allowed is False
+    assert "لم تصل رسالة واردة" in error
+
+
+def test_telegram_dm_list_reads_zernio_conversations(monkeypatch, conn, config):
+    channel_id = conn.execute(
+        """INSERT INTO channels(platform,account_name,zernio_account_id,zernio_profile_id,is_active)
+           VALUES ('instagram','zernio channel','z-account','z-profile',1)"""
+    ).lastrowid
+    conn.commit()
+    class FakeZernio:
+        def __init__(self):
+            pass
+        def list_inbox_conversations(self, *, account_id, limit):
+            assert account_id == "z-account"
+            return [{
+                "id": "thread-z-1", "participantName": "Customer",
+                "participantId": "customer-1", "updatedTime": "2026-11-21T11:00:00Z",
+                "unreadCount": 2,
+            }]
+    monkeypatch.setattr("worker.zernio_client.ZernioClient", FakeZernio)
+    client = FakeTelegram()
+    assert process_control_update(conn, cfg(config), client, callback(data="bs:dms"), graph_client_for=None)
+    assert "محادثة عبر Zernio" in client.messages[0][1]
+    ref = conn.execute(
+        "SELECT conversation_id FROM telegram_dm_conversation_refs WHERE channel_id=?",
+        (channel_id,),
+    ).fetchone()
+    assert ref["conversation_id"] == "thread-z-1"
